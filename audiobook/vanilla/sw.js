@@ -37,23 +37,55 @@ self.addEventListener('activate', function (e) {
   self.clients.claim();
 });
 
+// Serve a Range request from a cached full response
+function serveRange(request, cached) {
+  var rangeHeader = request.headers.get('Range');
+  if (!rangeHeader || !cached) return cached;
+
+  return cached.arrayBuffer().then(function (buf) {
+    var match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+    if (!match) return cached;
+
+    var start = parseInt(match[1], 10);
+    var end = match[2] ? parseInt(match[2], 10) : buf.byteLength - 1;
+    end = Math.min(end, buf.byteLength - 1);
+
+    return new Response(buf.slice(start, end + 1), {
+      status: 206,
+      statusText: 'Partial Content',
+      headers: {
+        'Content-Range': 'bytes ' + start + '-' + end + '/' + buf.byteLength,
+        'Content-Length': String(end - start + 1),
+        'Content-Type': 'audio/mp4',
+        'Accept-Ranges': 'bytes'
+      }
+    });
+  });
+}
+
 // Fetch: serve from cache, fall back to network, cache audio on first play
 self.addEventListener('fetch', function (e) {
   var url = new URL(e.request.url);
 
-  // Audio files: cache on first request (too large to pre-cache)
+  // Audio files: handle Range requests from cache
   if (url.pathname.match(/\.(m4b|mp3|m4a|ogg)$/)) {
     e.respondWith(
       caches.open(CACHE_NAME).then(function (cache) {
-        return cache.match(e.request).then(function (cached) {
-          if (cached) return cached;
-          return fetch(e.request).then(function (response) {
-            // Only cache complete responses (not partial/range)
-            if (response.status === 200) {
-              cache.put(e.request, response.clone());
-            }
-            return response;
-          });
+        // Match ignoring Range header (we handle it ourselves)
+        return cache.match(e.request, { ignoreVary: true }).then(function (cached) {
+          if (!cached) {
+            // Also try without query string / varying headers
+            return cache.match(new Request(e.request.url)).then(function (cached2) {
+              if (cached2) return serveRange(e.request, cached2);
+              return fetch(e.request).then(function (response) {
+                if (response.status === 200) {
+                  cache.put(new Request(e.request.url), response.clone());
+                }
+                return response;
+              });
+            });
+          }
+          return serveRange(e.request, cached);
         });
       })
     );

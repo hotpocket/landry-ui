@@ -7,7 +7,8 @@
  *     books: [...],
  *     audioBaseUrl: 'audio/',
  *     transcriptUrl: 'transcripts.json',
- *     feedbackUrl: 'https://bl.landry.bot/events'
+ *     feedbackUrl: 'https://bl.landry.bot/events',
+ *     title: 'My Audiobooks'
  *   });
  */
 var RepoStoryPlayer = (function () {
@@ -18,6 +19,9 @@ var RepoStoryPlayer = (function () {
   var speeds = [0.75, 1, 1.25, 1.5, 1.75, 2];
   var speedIdx = 1;
   var transcriptData = null;
+
+  // Cached DOM references (set once in openBook)
+  var dom = {};
 
   function formatTime(s) {
     if (isNaN(s)) return '0:00';
@@ -45,10 +49,18 @@ var RepoStoryPlayer = (function () {
     localStorage.setItem('rs-last-book', String(currentBookIdx));
   }
 
+  // Binary search for chapter at time t
   function getCurrentChapter() {
     if (!currentBook) return null;
+    var chapters = currentBook.chapters;
     var t = audio.currentTime;
-    return currentBook.chapters.find(function (ch) { return t >= ch.start && t < ch.end; }) || currentBook.chapters[0];
+    var lo = 0, hi = chapters.length - 1;
+    while (lo < hi) {
+      var mid = (lo + hi + 1) >> 1;
+      if (chapters[mid].start <= t) lo = mid;
+      else hi = mid - 1;
+    }
+    return chapters[lo];
   }
 
   function getBookTranscript() {
@@ -57,28 +69,33 @@ var RepoStoryPlayer = (function () {
     return transcriptData.books.find(function (b) { return b.slug === slug; }) || null;
   }
 
+  // Binary search for chunk at time within chapter
   function getCurrentChunk() {
     var bt = getBookTranscript();
     if (!bt) return null;
     var ch = getCurrentChapter();
     if (!ch) return null;
     var ct = bt.chapters.find(function (c) { return c.index === ch.id + 1; });
-    if (!ct) return null;
+    if (!ct || !ct.chunks.length) return null;
     var timeInChapter = audio.currentTime - ch.start;
-    for (var i = 0; i < ct.chunks.length; i++) {
-      if (timeInChapter >= ct.chunks[i].start && timeInChapter < ct.chunks[i].end) {
-        return { chapterIndex: ch.id + 1, chunk: ct.chunks[i] };
-      }
+    var chunks = ct.chunks;
+    var lo = 0, hi = chunks.length - 1;
+    while (lo < hi) {
+      var mid = (lo + hi + 1) >> 1;
+      if (chunks[mid].start <= timeInChapter) lo = mid;
+      else hi = mid - 1;
+    }
+    if (timeInChapter >= chunks[lo].start && timeInChapter < chunks[lo].end) {
+      return { chapterIndex: ch.id + 1, chunk: chunks[lo] };
     }
     return null;
   }
 
-  // --- Rendering ---
+  // --- Offline download ---
 
   function checkOfflineStatus(book) {
     if (!('caches' in window)) return Promise.resolve(false);
     var audioUrl = (config.audioBaseUrl || 'audio/') + book.filename;
-    // Check both relative and absolute URLs (background fetch caches absolute)
     var absoluteUrl = new URL(audioUrl, window.location.href).href;
     return caches.open('audiobook-v1').then(function (cache) {
       return cache.match(audioUrl).then(function (r) {
@@ -105,6 +122,8 @@ var RepoStoryPlayer = (function () {
           loaded += result.value.length;
           if (total > 0) {
             btn.innerHTML = Math.round(loaded / total * 100) + '%';
+          } else if (loaded > 0) {
+            btn.innerHTML = Math.round(loaded / (1024 * 1024)) + 'MB';
           }
           return pump();
         });
@@ -130,6 +149,8 @@ var RepoStoryPlayer = (function () {
       btn.title = 'Download failed — try again';
     });
   }
+
+  // --- Rendering ---
 
   function renderLibrary() {
     var container = config.container;
@@ -162,7 +183,6 @@ var RepoStoryPlayer = (function () {
         downloadForOffline(book, dlBtn);
       };
 
-      // Check if already cached
       checkOfflineStatus(book).then(function (cached) {
         if (cached) {
           dlBtn.classList.add('downloaded');
@@ -186,12 +206,19 @@ var RepoStoryPlayer = (function () {
   var scrubbing = null;
   var didDrag = false;
 
+  // Chapter list item references (indexed by chapter id)
+  var chapterLis = [];
+  var chapterProgs = [];
+  var chapterScrubs = [];
+
   function renderChapters() {
-    var container = config.container;
-    var list = container.querySelector('#chapter-list');
-    var trackBar = container.querySelector('#track-bar');
+    var list = dom.chapterList;
     list.innerHTML = '';
-    trackBar.querySelectorAll('.chapter-mark').forEach(function (el) { el.remove(); });
+    chapterLis = [];
+    chapterProgs = [];
+    chapterScrubs = [];
+
+    dom.trackBar.querySelectorAll('.chapter-mark').forEach(function (el) { el.remove(); });
 
     currentBook.chapters.forEach(function (ch, i) {
       var li = document.createElement('li');
@@ -217,7 +244,6 @@ var RepoStoryPlayer = (function () {
       durSpan.textContent = formatTime(dur);
       li.appendChild(durSpan);
 
-      // Mousedown on the scrubber handle = start dragging
       scrubberEl.addEventListener('mousedown', function (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -226,13 +252,11 @@ var RepoStoryPlayer = (function () {
         scrubbing = { li: li, ch: ch, dur: dur };
       });
 
-      // Mousedown on the li = start potential click (not drag)
       li.addEventListener('mousedown', function (e) {
         if (e.target === scrubberEl) return;
         didDrag = false;
       });
 
-      // Click on li = navigate to chapter (only if we didn't drag)
       li.addEventListener('click', function (e) {
         if (didDrag) return;
         if (e.target === scrubberEl) return;
@@ -241,12 +265,15 @@ var RepoStoryPlayer = (function () {
       });
 
       list.appendChild(li);
+      chapterLis.push(li);
+      chapterProgs.push(progressEl);
+      chapterScrubs.push(scrubberEl);
 
       if (i > 0 && currentBook.duration > 0) {
         var mark = document.createElement('div');
         mark.className = 'chapter-mark';
         mark.style.left = (ch.start / currentBook.duration * 100) + '%';
-        trackBar.appendChild(mark);
+        dom.trackBar.appendChild(mark);
       }
     });
   }
@@ -284,9 +311,7 @@ var RepoStoryPlayer = (function () {
     document.addEventListener('mousemove', function (e) {
       if (!dividerDragging) return;
       var rect = contentArea.getBoundingClientRect();
-      var x = e.clientX - rect.left;
-      var total = rect.width - 5; // minus divider width
-      var leftPct = Math.max(5, Math.min(95, (x / rect.width) * 100));
+      var leftPct = Math.max(5, Math.min(95, ((e.clientX - rect.left) / rect.width) * 100));
       chapterPanel.style.flex = '0 0 ' + leftPct + '%';
       transcriptPanel.style.flex = '0 0 ' + (100 - leftPct) + '%';
     });
@@ -299,14 +324,11 @@ var RepoStoryPlayer = (function () {
   }
 
   function renderTranscript() {
-    var container = config.container;
-    var chunksEl = container.querySelector('#transcript-chunks');
-    if (chunksEl) chunksEl.innerHTML = '';
+    if (dom.transcriptChunks) dom.transcriptChunks.innerHTML = '';
   }
 
   function renderTranscriptChunks(chapterIndex) {
-    var container = config.container;
-    var chunksEl = container.querySelector('#transcript-chunks');
+    var chunksEl = dom.transcriptChunks;
     if (!chunksEl) return;
 
     var bt = getBookTranscript();
@@ -367,91 +389,90 @@ var RepoStoryPlayer = (function () {
   var lastActiveChunkId = null;
   var userScrolledChapters = false;
   var userScrolledTranscript = false;
+  var lastFormattedTime = '';
+  var lastPlayState = null;
 
   function updatePlayer() {
     requestAnimationFrame(updatePlayer);
     if (!currentBook) return;
-    var container = config.container;
 
     var t = audio.currentTime;
     var d = audio.duration || currentBook.duration;
-    container.querySelector('#current-time').textContent = formatTime(t);
-    container.querySelector('#total-time').textContent = formatTime(d);
-    container.querySelector('#progress').style.width = (t / d * 100) + '%';
-    container.querySelector('#play-btn').innerHTML = audio.paused ? '&#9654;' : '&#9646;&#9646;';
+
+    // Only update text when it actually changes (avoid DOM thrash)
+    var ft = formatTime(t);
+    if (ft !== lastFormattedTime) {
+      lastFormattedTime = ft;
+      dom.currentTime.textContent = ft;
+    }
+    dom.progress.style.width = (t / d * 100) + '%';
+
+    var paused = audio.paused;
+    if (paused !== lastPlayState) {
+      lastPlayState = paused;
+      dom.playBtn.innerHTML = paused ? '&#9654;' : '&#9646;&#9646;';
+      dom.totalTime.textContent = formatTime(d);
+    }
 
     var ch = getCurrentChapter();
-    if (ch) {
-      container.querySelector('#chapter-title').textContent = ch.title;
+    if (!ch) return;
 
-      // Only update progress/scrubber on active chapter
-      container.querySelectorAll('.chapter-list li').forEach(function (li, i) {
-        var isActive = i === ch.id;
-        li.classList.toggle('active', isActive);
-
-        var prog = li.querySelector('.ch-progress');
-        var scrub = li.querySelector('.ch-scrubber');
-        if (!prog) return;
-
-        if (isActive) {
-          var chData = currentBook.chapters[i];
-          var chDur = chData.end - chData.start;
-          var pct = (t - chData.start) / chDur * 100;
-          pct = Math.max(0, Math.min(100, pct));
-          prog.style.width = pct + '%';
-          if (scrub) scrub.style.left = 'calc(' + pct + '% - 6px)';
-        } else {
-          prog.style.width = '0%';
-        }
-      });
-
-      // Auto-scroll active chapter into view (paused if user scrolled manually)
-      if (!userScrolledChapters) {
-        var activeLi = container.querySelector('#ch-' + ch.id);
-        if (activeLi) {
-          var chList = container.querySelector('.chapter-list');
-          var liTop = activeLi.offsetTop - chList.offsetTop;
-          var liH = activeLi.offsetHeight;
-          var visible = liTop >= chList.scrollTop && (liTop + liH) <= (chList.scrollTop + chList.clientHeight);
-          if (!visible) {
-            chList.scrollTop = liTop - chList.clientHeight / 3;
-          }
-        }
+    // Only do work when chapter changes
+    if (ch.id !== lastActiveChapterId) {
+      // Remove active from old chapter
+      if (lastActiveChapterId !== null && chapterLis[lastActiveChapterId]) {
+        chapterLis[lastActiveChapterId].classList.remove('active');
+        chapterProgs[lastActiveChapterId].style.width = '0%';
       }
+      chapterLis[ch.id].classList.add('active');
 
-      // Update transcript when chapter changes — re-enable auto-scroll
-      if (ch.id !== lastActiveChapterId) {
-        lastActiveChapterId = ch.id;
-        lastActiveChunkId = null;
-        userScrolledChapters = false;
-        userScrolledTranscript = false;
-        renderTranscriptChunks(ch.id + 1);
+      dom.chapterTitle.textContent = ch.title;
+
+      lastActiveChapterId = ch.id;
+      lastActiveChunkId = null;
+      userScrolledChapters = false;
+      userScrolledTranscript = false;
+      renderTranscriptChunks(ch.id + 1);
+    }
+
+    // Update progress on active chapter only (one element, not 141)
+    var chDur = ch.end - ch.start;
+    var pct = Math.max(0, Math.min(100, (t - ch.start) / chDur * 100));
+    chapterProgs[ch.id].style.width = pct + '%';
+    if (chapterScrubs[ch.id]) {
+      chapterScrubs[ch.id].style.left = 'calc(' + pct + '% - 6px)';
+    }
+
+    // Auto-scroll chapter list (only on chapter change, handled above via flag reset)
+    if (!userScrolledChapters) {
+      var activeLi = chapterLis[ch.id];
+      var chList = dom.chapterList;
+      var liTop = activeLi.offsetTop - chList.offsetTop;
+      var liH = activeLi.offsetHeight;
+      var visible = liTop >= chList.scrollTop && (liTop + liH) <= (chList.scrollTop + chList.clientHeight);
+      if (!visible) {
+        chList.scrollTop = liTop - chList.clientHeight / 3;
       }
+    }
 
-      // Update active chunk highlight
-      var cur = getCurrentChunk();
-      if (cur) {
-        var chunkId = cur.chunk.index;
-        if (chunkId !== lastActiveChunkId) {
-          if (lastActiveChunkId !== null) {
-            var prev = container.querySelector('#tc-' + (ch.id + 1) + '-' + lastActiveChunkId);
-            if (prev) prev.classList.remove('active');
-          }
-          var el = container.querySelector('#tc-' + cur.chapterIndex + '-' + chunkId);
-          if (el) {
-            el.classList.add('active');
-            // Auto-scroll transcript (paused if user scrolled manually)
-            if (!userScrolledTranscript) {
-              var chunksContainer = container.querySelector('#transcript-chunks');
-              if (chunksContainer) {
-                var elTop = el.offsetTop - chunksContainer.offsetTop;
-                var scrollTarget = elTop - chunksContainer.clientHeight / 3;
-                chunksContainer.scrollTop = scrollTarget;
-              }
-            }
-          }
-          lastActiveChunkId = chunkId;
+    // Update active chunk highlight
+    var cur = getCurrentChunk();
+    if (cur) {
+      var chunkId = cur.chunk.index;
+      if (chunkId !== lastActiveChunkId) {
+        if (lastActiveChunkId !== null) {
+          var prev = dom.transcriptChunks.querySelector('#tc-' + (ch.id + 1) + '-' + lastActiveChunkId);
+          if (prev) prev.classList.remove('active');
         }
+        var el = dom.transcriptChunks.querySelector('#tc-' + cur.chapterIndex + '-' + chunkId);
+        if (el) {
+          el.classList.add('active');
+          if (!userScrolledTranscript) {
+            var elTop = el.offsetTop - dom.transcriptChunks.offsetTop;
+            dom.transcriptChunks.scrollTop = elTop - dom.transcriptChunks.clientHeight / 3;
+          }
+        }
+        lastActiveChunkId = chunkId;
       }
     }
   }
@@ -463,11 +484,25 @@ var RepoStoryPlayer = (function () {
     currentBookIdx = idx;
     lastActiveChapterId = null;
     lastActiveChunkId = null;
+    lastFormattedTime = '';
+    lastPlayState = null;
     var container = config.container;
 
     container.querySelector('#library').style.display = 'none';
     container.querySelector('#player-view').classList.add('active');
-    container.querySelector('#book-title').textContent = currentBook.title;
+
+    // Cache DOM references for the player view
+    dom.currentTime = container.querySelector('#current-time');
+    dom.totalTime = container.querySelector('#total-time');
+    dom.progress = container.querySelector('#progress');
+    dom.playBtn = container.querySelector('#play-btn');
+    dom.chapterTitle = container.querySelector('#chapter-title');
+    dom.bookTitle = container.querySelector('#book-title');
+    dom.chapterList = container.querySelector('#chapter-list');
+    dom.trackBar = container.querySelector('#track-bar');
+    dom.transcriptChunks = container.querySelector('#transcript-chunks');
+
+    dom.bookTitle.textContent = currentBook.title;
 
     audio.src = (config.audioBaseUrl || 'audio/') + currentBook.filename;
     audio.load();
@@ -511,7 +546,7 @@ var RepoStoryPlayer = (function () {
   }
 
   function seekTo(e) {
-    var bar = config.container.querySelector('#track-bar');
+    var bar = dom.trackBar;
     var pct = (e.clientX - bar.getBoundingClientRect().left) / bar.offsetWidth;
     audio.currentTime = pct * (audio.duration || currentBook.duration);
   }
@@ -529,7 +564,7 @@ var RepoStoryPlayer = (function () {
     fetch(url)
       .then(function (r) { return r.json(); })
       .then(function (data) { transcriptData = data; })
-      .catch(function () { /* transcripts unavailable — player works without them */ });
+      .catch(function () {});
   }
 
   function init(opts) {
@@ -537,7 +572,6 @@ var RepoStoryPlayer = (function () {
 
     RepoStoryFeedback.init(opts.feedbackUrl);
     loadTranscripts(opts.transcriptUrl);
-
 
     // Build DOM
     config.container.innerHTML = '' +
@@ -600,10 +634,6 @@ var RepoStoryPlayer = (function () {
     config.container.querySelector('#btn-fwd30').onclick = function () { skip(30); };
     config.container.querySelector('#speed-btn').onclick = cycleSpeed;
 
-    // Global scrub drag handlers
-    document.addEventListener('mousemove', handleScrubMove);
-    document.addEventListener('mouseup', handleScrubEnd);
-
     // Detect user-initiated scrolling to pause auto-scroll
     config.container.querySelector('#chapter-list').addEventListener('wheel', function () {
       userScrolledChapters = true;
@@ -611,9 +641,7 @@ var RepoStoryPlayer = (function () {
     config.container.querySelector('#transcript-chunks').addEventListener('wheel', function () {
       userScrolledTranscript = true;
     });
-    // Also detect scrollbar drag via pointerdown inside the scrollable areas
     config.container.querySelector('#chapter-list').addEventListener('pointerdown', function (e) {
-      // Scrollbar click: pointerdown on the element itself (not a child) near the right edge
       var rect = e.currentTarget.getBoundingClientRect();
       if (e.clientX > rect.right - 20) userScrolledChapters = true;
     });
@@ -621,6 +649,18 @@ var RepoStoryPlayer = (function () {
       var rect = e.currentTarget.getBoundingClientRect();
       if (e.clientX > rect.right - 20) userScrolledTranscript = true;
     });
+
+    // Touch scroll detection for mobile
+    config.container.querySelector('#chapter-list').addEventListener('touchmove', function () {
+      userScrolledChapters = true;
+    });
+    config.container.querySelector('#transcript-chunks').addEventListener('touchmove', function () {
+      userScrolledTranscript = true;
+    });
+
+    // Global scrub drag handlers
+    document.addEventListener('mousemove', handleScrubMove);
+    document.addEventListener('mouseup', handleScrubEnd);
 
     // Draggable panel divider
     initDivider();

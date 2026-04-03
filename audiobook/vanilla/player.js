@@ -486,6 +486,8 @@ var RepoStoryPlayer = (function () {
   function showLibrary() {
     saveProgress();
     audio.pause();
+    currentBook = null;
+    currentBookIdx = null;
     localStorage.removeItem('rs-last-book');
     var container = config.container;
     container.querySelector('#player-view').classList.remove('active');
@@ -540,7 +542,7 @@ var RepoStoryPlayer = (function () {
     // Build DOM
     config.container.innerHTML = '' +
       '<div class="library" id="library">' +
-      '  <h1>repo story</h1>' +
+      '  <h1>' + (config.title || 'audiobook') + '</h1>' +
       '  <div class="book-list" id="book-list"></div>' +
       '</div>' +
       '<div class="player-view" id="player-view">' +

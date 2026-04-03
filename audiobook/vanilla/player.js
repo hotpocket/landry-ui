@@ -92,52 +92,6 @@ var RepoStoryPlayer = (function () {
     var audioUrl = (config.audioBaseUrl || 'audio/') + book.filename;
     btn.classList.add('downloading');
     btn.innerHTML = '0%';
-
-    // Try Background Fetch API (survives app switching on Android)
-    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-      navigator.serviceWorker.ready.then(function (reg) {
-        if (!reg.backgroundFetch) return fallbackDownload(audioUrl, btn);
-
-        reg.backgroundFetch.get('audiobook-' + book.filename).then(function (existing) {
-          if (existing) {
-            monitorBgFetch(existing, btn);
-            return;
-          }
-          reg.backgroundFetch.fetch('audiobook-' + book.filename, [audioUrl], {
-            title: 'Downloading ' + book.title
-          }).then(function (bgFetch) {
-            monitorBgFetch(bgFetch, btn);
-          }).catch(function () {
-            fallbackDownload(audioUrl, btn);
-          });
-        });
-      });
-      return;
-    }
-
-    fallbackDownload(audioUrl, btn);
-  }
-
-  function monitorBgFetch(bgFetch, btn) {
-    function updateProgress() {
-      if (bgFetch.result === 'success') {
-        btn.classList.remove('downloading');
-        btn.classList.add('downloaded');
-        btn.innerHTML = '&#10003;';
-        btn.title = 'Available offline';
-        return;
-      }
-      if (bgFetch.downloadTotal > 0) {
-        btn.innerHTML = Math.round(bgFetch.downloaded / bgFetch.downloadTotal * 100) + '%';
-      } else if (bgFetch.downloaded > 0) {
-        btn.innerHTML = Math.round(bgFetch.downloaded / (1024 * 1024)) + 'MB';
-      }
-    }
-    bgFetch.addEventListener('progress', updateProgress);
-    updateProgress();
-  }
-
-  function fallbackDownload(audioUrl, btn) {
     fetch(audioUrl).then(function (response) {
       var total = parseInt(response.headers.get('Content-Length') || '0', 10);
       var loaded = 0;
@@ -582,15 +536,6 @@ var RepoStoryPlayer = (function () {
     RepoStoryFeedback.init(opts.feedbackUrl);
     loadTranscripts(opts.transcriptUrl);
 
-    // Listen for background fetch completion from service worker
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.addEventListener('message', function (e) {
-        if (e.data && e.data.type === 'bgfetch-done') {
-          // Re-render library to update download button states
-          if (!currentBook) renderLibrary();
-        }
-      });
-    }
 
     // Build DOM
     config.container.innerHTML = '' +

@@ -8,7 +8,10 @@ var SHELL_FILES = [
   'player.css',
   'player.js',
   'feedback.js',
-  'transcripts.json'
+  'transcripts.json',
+  'manifest.webmanifest',
+  'icons/icon-192.png',
+  'icons/icon-512.png'
 ];
 
 // Install: cache the app shell (small files only — audio cached on play)

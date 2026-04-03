@@ -35,7 +35,7 @@ var RepoStoryFeedback = (function () {
     flagged[key] = true;
     setFlagged(flagged);
 
-    if (!feedbackUrl) return;
+    if (!feedbackUrl || !navigator.onLine) return;
 
     var payload = {
       project: 'repo-story',

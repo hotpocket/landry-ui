@@ -16,6 +16,12 @@ Reusable UI components for brandonlandry.com projects.
 - `audiobook/react/` — React/TypeScript audiobook player
 - `serve/` — Dev server with HTTP Range support for large audio files
 
+## Performance lessons
+
+**Service worker Range requests on large files**: Never use `cached.arrayBuffer()` to serve Range requests — it reads the entire file (700MB+) into memory on every seek. Use `cached.blob()` then `Blob.slice(start, end)` which returns a lightweight reference with no memory copy. This is the difference between 20s seeks and instant seeks.
+
+**M4B moov atom**: Always encode with `-movflags +faststart` so the moov atom is at the front of the file. Without it, the browser must read to the end of the file before it can seek.
+
 ## Consumers
 
-Projects pull components via `luinst` (git archive fetch). Fetched directories are gitignored in consumer repos.
+Projects pull components via `luinst` (shallow clone fetch). Fetched directories are gitignored in consumer repos.

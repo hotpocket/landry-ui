@@ -37,16 +37,47 @@ self.addEventListener('activate', function (e) {
   self.clients.claim();
 });
 
+// Serve a Range request from a cached response using Blob.slice (no full read into memory)
+function serveRange(request, cached) {
+  var rangeHeader = request.headers.get('Range');
+  if (!rangeHeader || !cached) return Promise.resolve(cached);
+
+  return cached.blob().then(function (blob) {
+    var match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+    if (!match) return cached;
+
+    var start = parseInt(match[1], 10);
+    var end = match[2] ? parseInt(match[2], 10) : blob.size - 1;
+    end = Math.min(end, blob.size - 1);
+
+    return new Response(blob.slice(start, end + 1), {
+      status: 206,
+      statusText: 'Partial Content',
+      headers: {
+        'Content-Range': 'bytes ' + start + '-' + end + '/' + blob.size,
+        'Content-Length': String(end - start + 1),
+        'Content-Type': 'audio/mp4',
+        'Accept-Ranges': 'bytes'
+      }
+    });
+  });
+}
+
 // Fetch: serve from cache, fall back to network
 self.addEventListener('fetch', function (e) {
   var url = new URL(e.request.url);
 
-  // Audio files: let the browser/network handle Range requests directly.
-  // The download-for-offline feature caches audio via the player JS,
-  // but playback seeks go straight to the network (or browser disk cache).
-  // Reading 706MB into an ArrayBuffer per seek is too expensive.
+  // Audio files: serve from cache with Range support, fall back to network
   if (url.pathname.match(/\.(m4b|mp3|m4a|ogg)$/)) {
-    return; // Don't intercept — use default browser fetch
+    e.respondWith(
+      caches.open(CACHE_NAME).then(function (cache) {
+        return cache.match(new Request(e.request.url)).then(function (cached) {
+          if (cached) return serveRange(e.request, cached);
+          return fetch(e.request);
+        });
+      })
+    );
+    return;
   }
 
   // Everything else: cache first, network fallback

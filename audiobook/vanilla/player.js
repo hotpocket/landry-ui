@@ -122,17 +122,7 @@ var RepoStoryPlayer = (function () {
         : 0;
       btn.innerHTML = pct > 0 ? pct + '%' : '...';
     });
-    bgFetch.addEventListener('success', function () {
-      btn.classList.remove('downloading');
-      btn.classList.add('downloaded');
-      btn.innerHTML = '&#10003;';
-      btn.title = 'Available offline';
-    });
-    bgFetch.addEventListener('fail', function () {
-      btn.classList.remove('downloading');
-      btn.innerHTML = '&#8615;';
-      btn.title = 'Download failed — try again';
-    });
+    // success/fail handled via service worker postMessage → renderLibrary
   }
 
   function fallbackDownload(audioUrl, btn) {
@@ -579,6 +569,16 @@ var RepoStoryPlayer = (function () {
 
     RepoStoryFeedback.init(opts.feedbackUrl);
     loadTranscripts(opts.transcriptUrl);
+
+    // Listen for background fetch completion from service worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', function (e) {
+        if (e.data && e.data.type === 'bgfetch-done') {
+          // Re-render library to update download button states
+          if (!currentBook) renderLibrary();
+        }
+      });
+    }
 
     // Build DOM
     config.container.innerHTML = '' +

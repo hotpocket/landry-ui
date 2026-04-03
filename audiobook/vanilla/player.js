@@ -540,6 +540,11 @@ var RepoStoryPlayer = (function () {
     setInterval(saveProgress, 5000);
     audio.addEventListener('ended', saveProgress);
 
+    // Register service worker for offline support
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(function () {});
+    }
+
     renderLibrary();
 
     // Auto-resume last open book

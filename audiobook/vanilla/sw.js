@@ -72,3 +72,27 @@ self.addEventListener('fetch', function (e) {
     })
   );
 });
+
+// Background Fetch: move completed download into cache
+self.addEventListener('backgroundfetchsuccess', function (e) {
+  e.waitUntil(
+    (async function () {
+      var cache = await caches.open(CACHE_NAME);
+      var records = await e.registration.matchAll();
+      for (var record of records) {
+        var response = await record.responseReady;
+        await cache.put(record.request, response);
+      }
+      // Notify open clients
+      var clients = await self.clients.matchAll();
+      for (var client of clients) {
+        client.postMessage({ type: 'bgfetch-done', id: e.registration.id });
+      }
+    })()
+  );
+  e.updateUI({ title: 'Download complete' });
+});
+
+self.addEventListener('backgroundfetchfail', function (e) {
+  e.updateUI({ title: 'Download failed' });
+});

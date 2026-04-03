@@ -88,6 +88,54 @@ var RepoStoryPlayer = (function () {
     btn.classList.add('downloading');
     btn.innerHTML = '0%';
 
+    // Try Background Fetch API first (survives app switching on Android)
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.ready.then(function (reg) {
+        if (!reg.backgroundFetch) return fallbackDownload(audioUrl, btn);
+
+        // Check for existing background fetch
+        reg.backgroundFetch.get('audiobook-' + book.filename).then(function (existing) {
+          if (existing) {
+            monitorBgFetch(existing, btn);
+            return;
+          }
+          reg.backgroundFetch.fetch('audiobook-' + book.filename, [audioUrl], {
+            title: 'Downloading ' + book.title,
+            downloadTotal: 0 // unknown — let the browser figure it out
+          }).then(function (bgFetch) {
+            monitorBgFetch(bgFetch, btn);
+          }).catch(function () {
+            fallbackDownload(audioUrl, btn);
+          });
+        });
+      });
+      return;
+    }
+
+    fallbackDownload(audioUrl, btn);
+  }
+
+  function monitorBgFetch(bgFetch, btn) {
+    bgFetch.addEventListener('progress', function () {
+      var pct = bgFetch.downloadTotal > 0
+        ? Math.round(bgFetch.downloaded / bgFetch.downloadTotal * 100)
+        : 0;
+      btn.innerHTML = pct > 0 ? pct + '%' : '...';
+    });
+    bgFetch.addEventListener('success', function () {
+      btn.classList.remove('downloading');
+      btn.classList.add('downloaded');
+      btn.innerHTML = '&#10003;';
+      btn.title = 'Available offline';
+    });
+    bgFetch.addEventListener('fail', function () {
+      btn.classList.remove('downloading');
+      btn.innerHTML = '&#8615;';
+      btn.title = 'Download failed — try again';
+    });
+  }
+
+  function fallbackDownload(audioUrl, btn) {
     fetch(audioUrl).then(function (response) {
       var total = parseInt(response.headers.get('Content-Length') || '0', 10);
       var loaded = 0;

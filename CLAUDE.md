@@ -4,15 +4,18 @@ Reusable UI components for brandonlandry.com projects.
 
 ## Conventions
 
-- Vanilla JS, no frameworks. Components are IIFEs that expose a global init function.
-- No build step. Files are served as-is.
+- Components live under a feature directory (e.g. `audiobook/`) with platform subdirectories (`vanilla/`, `react/`, `flutter/`).
+- Vanilla JS uses IIFEs, no build step, served as-is.
+- React components are TypeScript, use Tailwind for styling.
+- All platform variants implement the same features against the same data formats (manifest.json, transcripts.json, feedback API).
 - Do not include AI attribution in commit messages or source files.
 
 ## Components
 
-- `player/` — Audiobook player with chapters, transcript sync, and error flagging
+- `audiobook/vanilla/` — Vanilla JS audiobook player
+- `audiobook/react/` — React/TypeScript audiobook player
 - `serve/` — Dev server with HTTP Range support for large audio files
 
 ## Consumers
 
-Projects pull components via `update-deps.sh` (git archive fetch). The `player/` directory is gitignored in consumer repos — it's a fetched dependency.
+Projects pull components via `luinst` (git archive fetch). Fetched directories are gitignored in consumer repos.

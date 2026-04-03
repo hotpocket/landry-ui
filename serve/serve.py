@@ -3,6 +3,7 @@
 
 import argparse
 import os
+import sys
 from functools import partial
 from http.server import SimpleHTTPRequestHandler
 from socketserver import ThreadingMixIn, TCPServer
@@ -76,6 +77,11 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--directory', default='output/site')
     parser.add_argument('-p', '--port', type=int, default=8000)
     args = parser.parse_args()
+
+    if not os.path.isdir(args.directory):
+        print(f"Error: {args.directory} not found")
+        print(f"Usage: python3 serve.py -d <site-dir>")
+        sys.exit(1)
 
     handler = partial(RangeHTTPRequestHandler, directory=args.directory)
     server = ThreadingHTTPServer(('', args.port), handler)

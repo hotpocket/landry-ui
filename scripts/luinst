@@ -1,0 +1,35 @@
+#!/bin/bash
+# luinst — landry-ui install
+#
+# Fetch a landry-ui component into the current project.
+#
+# Usage:
+#   ./luinst audiobook/vanilla player/
+#   ./luinst audiobook/react src/components/audiobook/
+#   ./luinst serve tools/
+#
+# Args:
+#   $1 — component path in landry-ui (e.g. audiobook/vanilla)
+#   $2 — local destination directory (created if needed)
+#
+# Environment:
+#   LANDRY_UI_REPO   — override repo URL (default: git@github.com:hotpocket/landry-ui.git)
+#   LANDRY_UI_BRANCH — override branch (default: main)
+set -euo pipefail
+
+REPO="${LANDRY_UI_REPO:-git@github.com:hotpocket/landry-ui.git}"
+BRANCH="${LANDRY_UI_BRANCH:-main}"
+
+COMPONENT="${1:?Usage: luinst <component-path> <dest-dir>}"
+DEST="${2:?Usage: luinst <component-path> <dest-dir>}"
+
+# Count path segments for --strip-components
+DEPTH=$(echo "$COMPONENT" | tr '/' '\n' | wc -l)
+
+echo "luinst: ${COMPONENT} → ${DEST} (${BRANCH})"
+rm -rf "$DEST"
+mkdir -p "$DEST"
+git archive --remote="$REPO" "$BRANCH" "${COMPONENT}/" | tar -x --strip-components="$DEPTH" -C "$DEST"
+
+echo "Installed:"
+ls -1 "$DEST"

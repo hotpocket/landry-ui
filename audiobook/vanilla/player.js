@@ -93,20 +93,18 @@ var RepoStoryPlayer = (function () {
     btn.classList.add('downloading');
     btn.innerHTML = '0%';
 
-    // Try Background Fetch API first (survives app switching on Android)
+    // Try Background Fetch API (survives app switching on Android)
     if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
       navigator.serviceWorker.ready.then(function (reg) {
         if (!reg.backgroundFetch) return fallbackDownload(audioUrl, btn);
 
-        // Check for existing background fetch
         reg.backgroundFetch.get('audiobook-' + book.filename).then(function (existing) {
           if (existing) {
             monitorBgFetch(existing, btn);
             return;
           }
           reg.backgroundFetch.fetch('audiobook-' + book.filename, [audioUrl], {
-            title: 'Downloading ' + book.title,
-            downloadTotal: 0 // unknown — let the browser figure it out
+            title: 'Downloading ' + book.title
           }).then(function (bgFetch) {
             monitorBgFetch(bgFetch, btn);
           }).catch(function () {
@@ -121,13 +119,22 @@ var RepoStoryPlayer = (function () {
   }
 
   function monitorBgFetch(bgFetch, btn) {
-    bgFetch.addEventListener('progress', function () {
-      var pct = bgFetch.downloadTotal > 0
-        ? Math.round(bgFetch.downloaded / bgFetch.downloadTotal * 100)
-        : 0;
-      btn.innerHTML = pct > 0 ? pct + '%' : '...';
-    });
-    // success/fail handled via service worker postMessage → renderLibrary
+    function updateProgress() {
+      if (bgFetch.result === 'success') {
+        btn.classList.remove('downloading');
+        btn.classList.add('downloaded');
+        btn.innerHTML = '&#10003;';
+        btn.title = 'Available offline';
+        return;
+      }
+      if (bgFetch.downloadTotal > 0) {
+        btn.innerHTML = Math.round(bgFetch.downloaded / bgFetch.downloadTotal * 100) + '%';
+      } else if (bgFetch.downloaded > 0) {
+        btn.innerHTML = Math.round(bgFetch.downloaded / (1024 * 1024)) + 'MB';
+      }
+    }
+    bgFetch.addEventListener('progress', updateProgress);
+    updateProgress();
   }
 
   function fallbackDownload(audioUrl, btn) {

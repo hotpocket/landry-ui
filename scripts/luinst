@@ -23,13 +23,21 @@ BRANCH="${LANDRY_UI_BRANCH:-main}"
 COMPONENT="${1:?Usage: luinst <component-path> <dest-dir>}"
 DEST="${2:?Usage: luinst <component-path> <dest-dir>}"
 
-# Count path segments for --strip-components
-DEPTH=$(echo "$COMPONENT" | tr '/' '\n' | wc -l)
-
 echo "luinst: ${COMPONENT} → ${DEST} (${BRANCH})"
+
+TMPDIR=$(mktemp -d)
+trap "rm -rf '$TMPDIR'" EXIT
+
+git clone --depth 1 --branch "$BRANCH" --single-branch --quiet "$REPO" "$TMPDIR"
+
+if [ ! -d "$TMPDIR/$COMPONENT" ]; then
+  echo "Error: ${COMPONENT} not found in repo" >&2
+  exit 1
+fi
+
 rm -rf "$DEST"
 mkdir -p "$DEST"
-git archive --remote="$REPO" "$BRANCH" "${COMPONENT}/" | tar -x --strip-components="$DEPTH" -C "$DEST"
+cp -r "$TMPDIR/$COMPONENT"/* "$DEST"/
 
 echo "Installed:"
 ls -1 "$DEST"

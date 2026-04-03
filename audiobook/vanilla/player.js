@@ -78,8 +78,13 @@ var RepoStoryPlayer = (function () {
   function checkOfflineStatus(book) {
     if (!('caches' in window)) return Promise.resolve(false);
     var audioUrl = (config.audioBaseUrl || 'audio/') + book.filename;
+    // Check both relative and absolute URLs (background fetch caches absolute)
+    var absoluteUrl = new URL(audioUrl, window.location.href).href;
     return caches.open('audiobook-v1').then(function (cache) {
-      return cache.match(audioUrl).then(function (r) { return !!r; });
+      return cache.match(audioUrl).then(function (r) {
+        if (r) return true;
+        return cache.match(absoluteUrl).then(function (r2) { return !!r2; });
+      });
     }).catch(function () { return false; });
   }
 

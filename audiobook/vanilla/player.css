@@ -10,9 +10,17 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .book-item:hover { background: #252525; }
 .book-item .title { font-size: 1rem; }
 .book-item .meta { font-size: 0.8rem; color: #666; }
+.book-actions { display: flex; align-items: center; gap: 0.75rem; flex-shrink: 0; }
 .book-item .progress-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; flex-shrink: 0; }
 .book-item .progress-dot.in-progress { background: #4a9eff; }
 .book-item .progress-dot.complete { background: #34d399; }
+
+/* Download for offline button */
+.dl-btn { background: none; border: 1px solid #333; color: #888; cursor: pointer; font-size: 0.85rem; padding: 0.3rem 0.6rem; border-radius: 6px; transition: all 0.15s; min-width: 2.5rem; text-align: center; }
+.dl-btn:hover { color: #4a9eff; border-color: #4a9eff; }
+.dl-btn.downloading { color: #4a9eff; border-color: #4a9eff; font-size: 0.7rem; cursor: default; }
+.dl-btn.downloaded { color: #34d399; border-color: #34d399; cursor: default; }
+.dl-btn.downloaded:hover { color: #34d399; border-color: #34d399; }
 
 .player-view { max-width: 1100px; margin: 0 auto; padding: 2rem 1rem; display: none; }
 .player-view.active { display: flex; flex-direction: column; height: 100vh; }

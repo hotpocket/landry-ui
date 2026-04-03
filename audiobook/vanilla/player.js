@@ -75,6 +75,58 @@ var RepoStoryPlayer = (function () {
 
   // --- Rendering ---
 
+  function checkOfflineStatus(book) {
+    if (!('caches' in window)) return Promise.resolve(false);
+    var audioUrl = (config.audioBaseUrl || 'audio/') + book.filename;
+    return caches.open('audiobook-v1').then(function (cache) {
+      return cache.match(audioUrl).then(function (r) { return !!r; });
+    }).catch(function () { return false; });
+  }
+
+  function downloadForOffline(book, btn) {
+    var audioUrl = (config.audioBaseUrl || 'audio/') + book.filename;
+    btn.classList.add('downloading');
+    btn.innerHTML = '0%';
+
+    fetch(audioUrl).then(function (response) {
+      var total = parseInt(response.headers.get('Content-Length') || '0', 10);
+      var loaded = 0;
+      var reader = response.body.getReader();
+      var chunks = [];
+
+      function pump() {
+        return reader.read().then(function (result) {
+          if (result.done) return;
+          chunks.push(result.value);
+          loaded += result.value.length;
+          if (total > 0) {
+            btn.innerHTML = Math.round(loaded / total * 100) + '%';
+          }
+          return pump();
+        });
+      }
+
+      return pump().then(function () {
+        var blob = new Blob(chunks);
+        var cachedResponse = new Response(blob, {
+          headers: { 'Content-Type': 'audio/mp4' }
+        });
+        return caches.open('audiobook-v1').then(function (cache) {
+          return cache.put(audioUrl, cachedResponse);
+        });
+      });
+    }).then(function () {
+      btn.classList.remove('downloading');
+      btn.classList.add('downloaded');
+      btn.innerHTML = '&#10003;';
+      btn.title = 'Available offline';
+    }).catch(function () {
+      btn.classList.remove('downloading');
+      btn.innerHTML = '&#8615;';
+      btn.title = 'Download failed — try again';
+    });
+  }
+
   function renderLibrary() {
     var container = config.container;
     var library = container.querySelector('#library');
@@ -85,10 +137,43 @@ var RepoStoryPlayer = (function () {
       var status = p.progress > 0.98 ? 'complete' : p.progress > 0.01 ? 'in-progress' : '';
       var div = document.createElement('div');
       div.className = 'book-item';
-      div.onclick = function () { openBook(i); };
-      div.innerHTML = '<div><div class="title">' + book.title + '</div>' +
-        '<div class="meta">' + book.chapters.length + ' chapters &middot; ' + formatTime(book.duration) + '</div></div>' +
-        '<div class="progress-dot ' + status + '"></div>';
+
+      var info = document.createElement('div');
+      info.onclick = function () { openBook(i); };
+      info.style.flex = '1';
+      info.style.cursor = 'pointer';
+      info.innerHTML = '<div class="title">' + book.title + '</div>' +
+        '<div class="meta">' + book.chapters.length + ' chapters &middot; ' + formatTime(book.duration) + '</div>';
+
+      var actions = document.createElement('div');
+      actions.className = 'book-actions';
+
+      var dlBtn = document.createElement('button');
+      dlBtn.className = 'dl-btn';
+      dlBtn.innerHTML = '&#8615;';
+      dlBtn.title = 'Download for offline';
+      dlBtn.onclick = function (e) {
+        e.stopPropagation();
+        if (dlBtn.classList.contains('downloaded') || dlBtn.classList.contains('downloading')) return;
+        downloadForOffline(book, dlBtn);
+      };
+
+      // Check if already cached
+      checkOfflineStatus(book).then(function (cached) {
+        if (cached) {
+          dlBtn.classList.add('downloaded');
+          dlBtn.innerHTML = '&#10003;';
+          dlBtn.title = 'Available offline';
+        }
+      });
+
+      var dot = document.createElement('div');
+      dot.className = 'progress-dot ' + status;
+
+      actions.appendChild(dlBtn);
+      actions.appendChild(dot);
+      div.appendChild(info);
+      div.appendChild(actions);
       list.appendChild(div);
     });
   }

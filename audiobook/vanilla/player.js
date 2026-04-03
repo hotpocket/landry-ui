@@ -302,21 +302,40 @@ var RepoStoryPlayer = (function () {
     var chapterPanel = config.container.querySelector('.chapter-panel');
     var transcriptPanel = config.container.querySelector('.transcript-panel');
 
+    function resizePanels(clientX) {
+      var rect = contentArea.getBoundingClientRect();
+      var leftPct = Math.max(5, Math.min(95, ((clientX - rect.left) / rect.width) * 100));
+      chapterPanel.style.flex = '0 0 ' + leftPct + '%';
+      transcriptPanel.style.flex = '0 0 ' + (100 - leftPct) + '%';
+    }
+
+    // Mouse
     divider.addEventListener('mousedown', function (e) {
       e.preventDefault();
       dividerDragging = true;
       divider.classList.add('dragging');
     });
-
     document.addEventListener('mousemove', function (e) {
       if (!dividerDragging) return;
-      var rect = contentArea.getBoundingClientRect();
-      var leftPct = Math.max(5, Math.min(95, ((e.clientX - rect.left) / rect.width) * 100));
-      chapterPanel.style.flex = '0 0 ' + leftPct + '%';
-      transcriptPanel.style.flex = '0 0 ' + (100 - leftPct) + '%';
+      resizePanels(e.clientX);
+    });
+    document.addEventListener('mouseup', function () {
+      if (!dividerDragging) return;
+      dividerDragging = false;
+      divider.classList.remove('dragging');
     });
 
-    document.addEventListener('mouseup', function () {
+    // Touch
+    divider.addEventListener('touchstart', function (e) {
+      e.preventDefault();
+      dividerDragging = true;
+      divider.classList.add('dragging');
+    });
+    document.addEventListener('touchmove', function (e) {
+      if (!dividerDragging) return;
+      resizePanels(e.touches[0].clientX);
+    });
+    document.addEventListener('touchend', function () {
       if (!dividerDragging) return;
       dividerDragging = false;
       divider.classList.remove('dragging');

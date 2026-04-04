@@ -106,7 +106,7 @@ var RepoStoryPlayer = (function () {
   }
 
   function downloadForOffline(book, btn) {
-    var audioUrl = (config.audioBaseUrl || 'audio/') + book.filename;
+    var audioUrl = new URL((config.audioBaseUrl || 'audio/') + book.filename, window.location.href).href;
     btn.classList.add('downloading');
     btn.innerHTML = '0%';
 
@@ -168,15 +168,17 @@ var RepoStoryPlayer = (function () {
         return cache.put(audioUrl, trackedResponse);
       });
 
-      // Cache everything needed for offline alongside the audio
+      // Cache everything needed for offline alongside the audio.
+      // Use absolute URLs as cache keys so the service worker can find them.
       var offlineFiles = ['./', 'player.css', 'player.js', 'feedback.js',
         'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
       if (config.transcriptUrl) offlineFiles.push(config.transcriptUrl);
 
       var shellCache = caches.open('audiobook-audio').then(function (cache) {
         return Promise.all(offlineFiles.map(function (file) {
-          return fetch(file).then(function (r) {
-            if (r.ok) return cache.put(file, r);
+          var absoluteUrl = new URL(file, window.location.href).href;
+          return fetch(absoluteUrl).then(function (r) {
+            if (r.ok) return cache.put(absoluteUrl, r);
           }).catch(function () {});
         }));
       });

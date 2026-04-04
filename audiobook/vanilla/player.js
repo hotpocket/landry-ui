@@ -130,15 +130,42 @@ var RepoStoryPlayer = (function () {
       if (wakeLock) { wakeLock.release(); wakeLock = null; }
     }
 
-    btn.innerHTML = '&#8987;';
     btn.title = 'Downloading — keep page open';
 
-    // Stream directly to cache — no clone, no progress reader, no memory buildup.
-    // Single pass: fetch → cache.put() handles the stream internally.
-    caches.open('audiobook-v1').then(function (cache) {
-      return fetch(audioUrl).then(function (response) {
-        if (!response.ok) throw new Error('Download failed');
-        return cache.put(audioUrl, response);
+    // Wrap the fetch body in a progress-tracking ReadableStream, then pass
+    // the wrapped response to cache.put(). Single stream, single pass —
+    // bytes flow through the progress counter directly into the cache.
+    // No clone, no buffering, no memory accumulation.
+    fetch(audioUrl).then(function (response) {
+      if (!response.ok) throw new Error('Download failed');
+      var total = parseInt(response.headers.get('Content-Length') || '0', 10);
+      var loaded = 0;
+      var reader = response.body.getReader();
+
+      var trackedStream = new ReadableStream({
+        pull: function (controller) {
+          return reader.read().then(function (result) {
+            if (result.done) {
+              controller.close();
+              return;
+            }
+            loaded += result.value.length;
+            if (total > 0) {
+              btn.innerHTML = Math.round(loaded / total * 100) + '%';
+            } else if (loaded > 0) {
+              btn.innerHTML = Math.round(loaded / (1024 * 1024)) + 'MB';
+            }
+            controller.enqueue(result.value);
+          });
+        }
+      });
+
+      var trackedResponse = new Response(trackedStream, {
+        headers: response.headers
+      });
+
+      return caches.open('audiobook-v1').then(function (cache) {
+        return cache.put(audioUrl, trackedResponse);
       });
     }).then(function () {
       cleanup();

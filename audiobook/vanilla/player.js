@@ -246,6 +246,7 @@ var RepoStoryPlayer = (function () {
     currentBook.chapters.forEach(function (ch, i) {
       var li = document.createElement('li');
       li.id = 'ch-' + i;
+      li.setAttribute('data-ch', i + 1);
       var dur = ch.end - ch.start;
 
       var progressEl = document.createElement('div');

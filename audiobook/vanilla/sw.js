@@ -82,20 +82,25 @@ self.addEventListener('fetch', function (e) {
   }
 
   // Shell files: network first, cache fallback (always get latest when online)
-  // Check both shell cache and audio cache (transcripts cached with audio download)
+  // When offline, check shell cache then audio cache (transcripts stored in both)
+  var requestUrl = e.request.url;
   e.respondWith(
     fetch(e.request).then(function (response) {
       return caches.open(CACHE_NAME).then(function (cache) {
-        cache.put(e.request, response.clone());
+        cache.put(requestUrl, response.clone());
         return response;
       });
     }).catch(function () {
-      return caches.match(e.request).then(function (cached) {
+      // Offline: search all caches by URL (ignoring headers/mode differences)
+      return caches.open(CACHE_NAME).then(function (cache) {
+        return cache.match(requestUrl);
+      }).then(function (cached) {
         if (cached) return cached;
-        // Fall back to audio cache (transcripts may be stored there)
         return caches.open(AUDIO_CACHE).then(function (cache) {
-          return cache.match(e.request);
+          return cache.match(requestUrl);
         });
+      }).then(function (cached) {
+        return cached || new Response('Offline', { status: 503 });
       });
     })
   );

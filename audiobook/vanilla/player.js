@@ -168,16 +168,20 @@ var RepoStoryPlayer = (function () {
         return cache.put(audioUrl, trackedResponse);
       });
 
-      // Also cache transcripts alongside audio so offline is complete
-      var transcriptCache = config.transcriptUrl
-        ? caches.open('audiobook-audio').then(function (cache) {
-            return fetch(config.transcriptUrl).then(function (r) {
-              return cache.put(config.transcriptUrl, r);
-            });
-          })
-        : Promise.resolve();
+      // Cache everything needed for offline alongside the audio
+      var offlineFiles = ['./', 'player.css', 'player.js', 'feedback.js',
+        'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
+      if (config.transcriptUrl) offlineFiles.push(config.transcriptUrl);
 
-      return Promise.all([audioCache, transcriptCache]);
+      var shellCache = caches.open('audiobook-audio').then(function (cache) {
+        return Promise.all(offlineFiles.map(function (file) {
+          return fetch(file).then(function (r) {
+            if (r.ok) return cache.put(file, r);
+          }).catch(function () {});
+        }));
+      });
+
+      return Promise.all([audioCache, shellCache]);
     }).then(function () {
       cleanup();
       btn.classList.remove('downloading');

@@ -97,7 +97,7 @@ var RepoStoryPlayer = (function () {
     if (!('caches' in window)) return Promise.resolve(false);
     var audioUrl = (config.audioBaseUrl || 'audio/') + book.filename;
     var absoluteUrl = new URL(audioUrl, window.location.href).href;
-    return caches.open('audiobook-v1').then(function (cache) {
+    return caches.open('audiobook-audio').then(function (cache) {
       return cache.match(audioUrl).then(function (r) {
         if (r) return true;
         return cache.match(absoluteUrl).then(function (r2) { return !!r2; });
@@ -164,7 +164,7 @@ var RepoStoryPlayer = (function () {
         headers: response.headers
       });
 
-      return caches.open('audiobook-v1').then(function (cache) {
+      return caches.open('audiobook-audio').then(function (cache) {
         return cache.put(audioUrl, trackedResponse);
       });
     }).then(function () {

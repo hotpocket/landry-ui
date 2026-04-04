@@ -118,7 +118,15 @@ var RepoStoryPlayer = (function () {
       }).catch(function () {});
     }
 
-    function releaseWakeLock() {
+    // Warn before navigating away during download
+    function onBeforeUnload(e) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+    window.addEventListener('beforeunload', onBeforeUnload);
+
+    function cleanup() {
+      window.removeEventListener('beforeunload', onBeforeUnload);
       if (wakeLock) { wakeLock.release(); wakeLock = null; }
     }
 
@@ -152,13 +160,13 @@ var RepoStoryPlayer = (function () {
 
       return Promise.all([cachePromise, pump()]);
     }).then(function () {
-      releaseWakeLock();
+      cleanup();
       btn.classList.remove('downloading');
       btn.classList.add('downloaded');
       btn.innerHTML = '&#10003;';
       btn.title = 'Available offline';
     }).catch(function () {
-      releaseWakeLock();
+      cleanup();
       btn.classList.remove('downloading');
       btn.innerHTML = '&#8615;';
       btn.title = 'Download failed — try again';

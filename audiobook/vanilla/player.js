@@ -111,14 +111,19 @@ var RepoStoryPlayer = (function () {
     btn.innerHTML = '0%';
     fetch(audioUrl).then(function (response) {
       var total = parseInt(response.headers.get('Content-Length') || '0', 10);
+
+      // Clone: one copy streams directly to cache (no memory buildup),
+      // the other we read just to track progress (discard chunks immediately)
+      var cachePromise = caches.open('audiobook-v1').then(function (cache) {
+        return cache.put(audioUrl, response.clone());
+      });
+
       var loaded = 0;
       var reader = response.body.getReader();
-      var chunks = [];
 
       function pump() {
         return reader.read().then(function (result) {
           if (result.done) return;
-          chunks.push(result.value);
           loaded += result.value.length;
           if (total > 0) {
             btn.innerHTML = Math.round(loaded / total * 100) + '%';
@@ -129,15 +134,7 @@ var RepoStoryPlayer = (function () {
         });
       }
 
-      return pump().then(function () {
-        var blob = new Blob(chunks);
-        var cachedResponse = new Response(blob, {
-          headers: { 'Content-Type': 'audio/mp4' }
-        });
-        return caches.open('audiobook-v1').then(function (cache) {
-          return cache.put(audioUrl, cachedResponse);
-        });
-      });
+      return Promise.all([cachePromise, pump()]);
     }).then(function () {
       btn.classList.remove('downloading');
       btn.classList.add('downloaded');

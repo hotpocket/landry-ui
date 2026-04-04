@@ -82,6 +82,7 @@ self.addEventListener('fetch', function (e) {
   }
 
   // Shell files: network first, cache fallback (always get latest when online)
+  // Check both shell cache and audio cache (transcripts cached with audio download)
   e.respondWith(
     fetch(e.request).then(function (response) {
       return caches.open(CACHE_NAME).then(function (cache) {
@@ -89,7 +90,13 @@ self.addEventListener('fetch', function (e) {
         return response;
       });
     }).catch(function () {
-      return caches.match(e.request);
+      return caches.match(e.request).then(function (cached) {
+        if (cached) return cached;
+        // Fall back to audio cache (transcripts may be stored there)
+        return caches.open(AUDIO_CACHE).then(function (cache) {
+          return cache.match(e.request);
+        });
+      });
     })
   );
 });

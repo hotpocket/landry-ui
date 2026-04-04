@@ -164,9 +164,20 @@ var RepoStoryPlayer = (function () {
         headers: response.headers
       });
 
-      return caches.open('audiobook-audio').then(function (cache) {
+      var audioCache = caches.open('audiobook-audio').then(function (cache) {
         return cache.put(audioUrl, trackedResponse);
       });
+
+      // Also cache transcripts alongside audio so offline is complete
+      var transcriptCache = config.transcriptUrl
+        ? caches.open('audiobook-audio').then(function (cache) {
+            return fetch(config.transcriptUrl).then(function (r) {
+              return cache.put(config.transcriptUrl, r);
+            });
+          })
+        : Promise.resolve();
+
+      return Promise.all([audioCache, transcriptCache]);
     }).then(function () {
       cleanup();
       btn.classList.remove('downloading');

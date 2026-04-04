@@ -108,16 +108,33 @@ var RepoStoryPlayer = (function () {
   function downloadForOffline(book, btn) {
     var audioUrl = (config.audioBaseUrl || 'audio/') + book.filename;
     btn.classList.add('downloading');
-    btn.innerHTML = '&#8987;';
-    btn.title = 'Downloading — keep page open';
+    btn.innerHTML = '0%';
+    fetch(audioUrl).then(function (response) {
+      var total = parseInt(response.headers.get('Content-Length') || '0', 10);
 
-    // Stream directly to cache — no memory accumulation, no progress tracking.
-    // cache.put() consumes the response stream without buffering the entire file.
-    caches.open('audiobook-v1').then(function (cache) {
-      return fetch(audioUrl).then(function (response) {
-        if (!response.ok) throw new Error('Download failed');
-        return cache.put(audioUrl, response);
+      // Clone: one copy streams directly to cache (no memory buildup),
+      // the other we read just to track progress (discard chunks immediately)
+      var cachePromise = caches.open('audiobook-v1').then(function (cache) {
+        return cache.put(audioUrl, response.clone());
       });
+
+      var loaded = 0;
+      var reader = response.body.getReader();
+
+      function pump() {
+        return reader.read().then(function (result) {
+          if (result.done) return;
+          loaded += result.value.length;
+          if (total > 0) {
+            btn.innerHTML = Math.round(loaded / total * 100) + '%';
+          } else if (loaded > 0) {
+            btn.innerHTML = Math.round(loaded / (1024 * 1024)) + 'MB';
+          }
+          return pump();
+        });
+      }
+
+      return Promise.all([cachePromise, pump()]);
     }).then(function () {
       btn.classList.remove('downloading');
       btn.classList.add('downloaded');

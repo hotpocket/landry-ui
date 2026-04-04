@@ -114,11 +114,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .track-bar .progress { height: 100%; background: #4a9eff; border-radius: 3px; transition: width 0.1s; }
 .track-bar .chapter-mark { position: absolute; top: -2px; width: 1px; height: 10px; background: #555; }
 
-.controls { display: flex; align-items: center; justify-content: center; gap: 1.5rem; margin-top: 1rem; flex-wrap: wrap; }
+.controls { display: flex; align-items: center; justify-content: center; gap: 1.5rem; margin-top: 1rem; }
 @media (max-width: 480px) { .controls { gap: 0.5rem; } }
 .controls button { background: none; border: none; color: #e0e0e0; cursor: pointer; font-size: 1.2rem; padding: 0.5rem 0.75rem; border-radius: 6px; transition: background 0.15s, color 0.15s; }
 .controls button:hover { color: #fff; background: #1a1a1a; }
-.play-btn { font-size: 2rem !important; }
+.play-btn { font-size: 2rem !important; width: 3.5rem; height: 3.5rem; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .play-btn:hover { background: #1a2a3a !important; }
 .speed-btn { font-size: 0.8rem !important; color: #888 !important; min-width: 3em; text-align: center; }
 .speed-btn:hover { color: #4a9eff !important; }

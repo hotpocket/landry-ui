@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""
+check-m4b — Validate an M4B audiobook before deployment.
+
+Checks:
+  - File exists and is non-zero
+  - moov atom is at the front (faststart)
+  - Has chapter metadata
+  - Duration is sane
+  - AAC audio codec
+
+Usage:
+    ./check-m4b path/to/book.m4b
+"""
+
+import json
+import struct
+import subprocess
+import sys
+from pathlib import Path
+
+
+def fail(msg):
+    print(f"FAIL: {msg}")
+    sys.exit(1)
+
+
+def warn(msg):
+    print(f"WARN: {msg}")
+
+
+def ok(msg):
+    print(f"  OK: {msg}")
+
+
+def check_m4b(path):
+    p = Path(path)
+    print(f"Checking {p.name} ({p.stat().st_size / (1024**3):.1f} GB)")
+    print()
+
+    # 1. File exists and non-zero
+    if not p.exists():
+        fail(f"File not found: {p}")
+    if p.stat().st_size == 0:
+        fail("File is empty")
+    ok(f"File size: {p.stat().st_size / (1024**3):.2f} GB")
+
+    # 2. moov atom position
+    with open(p, "rb") as f:
+        ftyp_size = struct.unpack(">I", f.read(4))[0]
+        f.seek(ftyp_size)
+        atom = f.read(8)[4:8]
+    if atom == b"moov":
+        ok("moov atom at front (faststart)")
+    else:
+        fail(f"moov atom NOT at front (found {atom!r} at offset {ftyp_size}). Fix with: ffmpeg -i {p} -c copy -movflags +faststart output.m4b")
+
+    # 3. ffprobe metadata
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-print_format", "json",
+         "-show_chapters", "-show_format", "-show_streams", str(p)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        fail(f"ffprobe failed: {result.stderr.strip()}")
+
+    data = json.loads(result.stdout)
+
+    # 4. Audio codec
+    streams = data.get("streams", [])
+    audio_streams = [s for s in streams if s.get("codec_type") == "audio"]
+    if not audio_streams:
+        fail("No audio stream found")
+    codec = audio_streams[0].get("codec_name", "unknown")
+    if codec == "aac":
+        ok(f"Audio codec: {codec}")
+    else:
+        warn(f"Audio codec: {codec} (expected aac)")
+
+    # 5. Chapters
+    chapters = data.get("chapters", [])
+    if not chapters:
+        fail("No chapters found")
+    ok(f"Chapters: {len(chapters)}")
+
+    # Check chapter continuity (no gaps)
+    for i in range(1, len(chapters)):
+        prev_end = float(chapters[i - 1].get("end_time", 0))
+        curr_start = float(chapters[i].get("start_time", 0))
+        gap = curr_start - prev_end
+        if gap > 1.0:
+            warn(f"Gap of {gap:.1f}s between chapter {i} and {i+1}")
+
+    first_title = chapters[0].get("tags", {}).get("title", "untitled")
+    last_title = chapters[-1].get("tags", {}).get("title", "untitled")
+    ok(f"First: {first_title}")
+    ok(f"Last:  {last_title}")
+
+    # 6. Duration
+    fmt = data.get("format", {})
+    duration = float(fmt.get("duration", 0))
+    if duration <= 0:
+        fail("Duration is zero or negative")
+    hours = duration / 3600
+    ok(f"Duration: {duration:.0f}s ({hours:.1f}h)")
+
+    # 7. Bitrate
+    bitrate = int(fmt.get("bit_rate", 0))
+    if bitrate > 0:
+        ok(f"Bitrate: {bitrate // 1000} kbps")
+
+    print()
+    print(f"PASS — {p.name}: {len(chapters)} chapters, {hours:.1f}h, faststart OK")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print(f"Usage: {sys.argv[0]} <path-to-m4b>")
+        sys.exit(1)
+    check_m4b(sys.argv[1])

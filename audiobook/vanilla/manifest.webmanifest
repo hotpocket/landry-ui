@@ -1,6 +1,6 @@
 {
-  "name": "Audiobook Player",
-  "short_name": "Audiobook",
+  "name": "Audiobooks for Kara",
+  "short_name": "Kara Books",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#0f0f0f",

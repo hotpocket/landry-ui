@@ -1,5 +1,5 @@
 // Service worker for offline audiobook playback.
-var CACHE_NAME = 'audiobook-v2';
+var CACHE_NAME = 'audiobook-shell';
 var AUDIO_CACHE = 'audiobook-audio';
 
 var SHELL_FILES = [

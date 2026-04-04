@@ -131,59 +131,55 @@ var RepoStoryPlayer = (function () {
     }
 
     btn.title = 'Downloading — keep page open';
+    btn.innerHTML = 'Syncing...';
 
-    // Wrap the fetch body in a progress-tracking ReadableStream, then pass
-    // the wrapped response to cache.put(). Single stream, single pass —
-    // bytes flow through the progress counter directly into the cache.
-    // No clone, no buffering, no memory accumulation.
-    fetch(audioUrl).then(function (response) {
-      if (!response.ok) throw new Error('Download failed');
-      var total = parseInt(response.headers.get('Content-Length') || '0', 10);
-      var loaded = 0;
-      var reader = response.body.getReader();
+    // Step 1: Cache all shell files first (fast — under 15MB total)
+    var offlineFiles = ['./', 'player.css', 'player.js', 'feedback.js',
+      'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
+    if (config.transcriptUrl) offlineFiles.push(config.transcriptUrl);
 
-      var trackedStream = new ReadableStream({
-        pull: function (controller) {
-          return reader.read().then(function (result) {
-            if (result.done) {
-              controller.close();
-              return;
-            }
-            loaded += result.value.length;
-            if (total > 0) {
-              btn.innerHTML = Math.round(loaded / total * 100) + '%';
-            } else if (loaded > 0) {
-              btn.innerHTML = Math.round(loaded / (1024 * 1024)) + 'MB';
-            }
-            controller.enqueue(result.value);
-          });
-        }
+    caches.open('audiobook-audio').then(function (cache) {
+      return Promise.all(offlineFiles.map(function (file) {
+        var absoluteUrl = new URL(file, window.location.href).href;
+        return fetch(absoluteUrl).then(function (r) {
+          if (r.ok) return cache.put(absoluteUrl, r);
+        }).catch(function () {});
+      }));
+    }).then(function () {
+      // Step 2: Stream audio into cache with progress tracking
+      btn.innerHTML = '0%';
+      return fetch(audioUrl).then(function (response) {
+        if (!response.ok) throw new Error('Download failed');
+        var total = parseInt(response.headers.get('Content-Length') || '0', 10);
+        var loaded = 0;
+        var reader = response.body.getReader();
+
+        var trackedStream = new ReadableStream({
+          pull: function (controller) {
+            return reader.read().then(function (result) {
+              if (result.done) {
+                controller.close();
+                return;
+              }
+              loaded += result.value.length;
+              if (total > 0) {
+                btn.innerHTML = Math.round(loaded / total * 100) + '%';
+              } else if (loaded > 0) {
+                btn.innerHTML = Math.round(loaded / (1024 * 1024)) + 'MB';
+              }
+              controller.enqueue(result.value);
+            });
+          }
+        });
+
+        var trackedResponse = new Response(trackedStream, {
+          headers: response.headers
+        });
+
+        return caches.open('audiobook-audio').then(function (cache) {
+          return cache.put(audioUrl, trackedResponse);
+        });
       });
-
-      var trackedResponse = new Response(trackedStream, {
-        headers: response.headers
-      });
-
-      var audioCache = caches.open('audiobook-audio').then(function (cache) {
-        return cache.put(audioUrl, trackedResponse);
-      });
-
-      // Cache everything needed for offline alongside the audio.
-      // Use absolute URLs as cache keys so the service worker can find them.
-      var offlineFiles = ['./', 'player.css', 'player.js', 'feedback.js',
-        'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
-      if (config.transcriptUrl) offlineFiles.push(config.transcriptUrl);
-
-      var shellCache = caches.open('audiobook-audio').then(function (cache) {
-        return Promise.all(offlineFiles.map(function (file) {
-          var absoluteUrl = new URL(file, window.location.href).href;
-          return fetch(absoluteUrl).then(function (r) {
-            if (r.ok) return cache.put(absoluteUrl, r);
-          }).catch(function () {});
-        }));
-      });
-
-      return Promise.all([audioCache, shellCache]);
     }).then(function () {
       cleanup();
       btn.classList.remove('downloading');

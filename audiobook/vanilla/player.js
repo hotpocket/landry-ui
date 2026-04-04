@@ -411,40 +411,12 @@ var RepoStoryPlayer = (function () {
       var textSpan = document.createElement('span');
       textSpan.className = 'chunk-text';
       textSpan.textContent = chunk.text;
-      textSpan.onclick = function () {
+      div.onclick = function () {
         var ch = currentBook.chapters[chapterIndex - 1];
         if (ch) { audio.currentTime = ch.start + chunk.start; audio.play(); }
       };
 
-      var flagDiv = document.createElement('span');
-      flagDiv.className = 'chunk-flag';
-      if (RepoStoryFeedback.isFlagged(slug, chapterIndex, chunk.index)) {
-        flagDiv.classList.add('flagged');
-      }
-
-      var flagBtn = document.createElement('button');
-      flagBtn.innerHTML = '&#x26A0;';
-      flagBtn.title = 'Flag transcription error';
-      if (RepoStoryFeedback.isFlagged(slug, chapterIndex, chunk.index)) {
-        flagBtn.classList.add('flagged');
-      }
-      flagBtn.onclick = function () {
-        var ch = currentBook.chapters[chapterIndex - 1];
-        var timestamp = ch ? ch.start + chunk.start : chunk.start;
-        if (flagBtn.classList.contains('flagged')) {
-          RepoStoryFeedback.unflag(slug, chapterIndex, chunk.index);
-          flagBtn.classList.remove('flagged');
-          flagDiv.classList.remove('flagged');
-        } else {
-          RepoStoryFeedback.flag(slug, chapterIndex, chunk.index, chunk.text, timestamp);
-          flagBtn.classList.add('flagged');
-          flagDiv.classList.add('flagged');
-        }
-      };
-
-      flagDiv.appendChild(flagBtn);
       div.appendChild(textSpan);
-      div.appendChild(flagDiv);
       chunksEl.appendChild(div);
     });
   }

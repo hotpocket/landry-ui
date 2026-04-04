@@ -109,6 +109,19 @@ var RepoStoryPlayer = (function () {
     var audioUrl = (config.audioBaseUrl || 'audio/') + book.filename;
     btn.classList.add('downloading');
     btn.innerHTML = '0%';
+
+    // Keep screen on during download
+    var wakeLock = null;
+    if ('wakeLock' in navigator) {
+      navigator.wakeLock.request('screen').then(function (lock) {
+        wakeLock = lock;
+      }).catch(function () {});
+    }
+
+    function releaseWakeLock() {
+      if (wakeLock) { wakeLock.release(); wakeLock = null; }
+    }
+
     fetch(audioUrl).then(function (response) {
       var total = parseInt(response.headers.get('Content-Length') || '0', 10);
 
@@ -136,11 +149,13 @@ var RepoStoryPlayer = (function () {
 
       return Promise.all([cachePromise, pump()]);
     }).then(function () {
+      releaseWakeLock();
       btn.classList.remove('downloading');
       btn.classList.add('downloaded');
       btn.innerHTML = '&#10003;';
       btn.title = 'Available offline';
     }).catch(function () {
+      releaseWakeLock();
       btn.classList.remove('downloading');
       btn.innerHTML = '&#8615;';
       btn.title = 'Download failed — try again';

@@ -136,7 +136,10 @@ var RepoStoryPlayer = (function () {
 
       function pump() {
         return reader.read().then(function (result) {
-          if (result.done) return;
+          if (result.done) {
+            btn.innerHTML = 'Saving...';
+            return;
+          }
           loaded += result.value.length;
           if (total > 0) {
             btn.innerHTML = Math.round(loaded / total * 100) + '%';

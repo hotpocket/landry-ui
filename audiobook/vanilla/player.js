@@ -1,5 +1,13 @@
 /**
- * player.js — Repo Story audiobook player component.
+ * player.js — Repo Story audiobook player component (per-chapter model).
+ *
+ * Each book contains a list of chapter objects with per-chapter audio URLs:
+ *   { id, n, title, filename, start, end, duration, size }
+ *
+ * `start`/`end` are book-relative (sum of prior chapter durations); the actual
+ * <audio> element only loads one chapter at a time, so audio.currentTime is
+ * chapter-local. Use bookTime() / bookDuration() for book-relative reads,
+ * and seekToBookTime() / loadChapter() for navigation.
  *
  * Usage:
  *   RepoStoryPlayer.init({
@@ -15,10 +23,13 @@ var RepoStoryPlayer = (function () {
   var config = {};
   var currentBook = null;
   var currentBookIdx = null;
+  var currentChapterIdx = 0;
   var audio = null;
   var speeds = [0.75, 1, 1.25, 1.5, 1.75, 2];
   var speedIdx = 1;
   var transcriptData = null;
+  var pendingPlayAfterLoad = false;
+  var loadGen = 0;  // monotonically-increasing id; lets us cancel stale loadedmetadata callbacks
 
   // Cached DOM references (set once in openBook)
   var dom = {};
@@ -32,44 +43,114 @@ var RepoStoryPlayer = (function () {
     return m + ':' + String(sec).padStart(2, '0');
   }
 
+  function audioUrlFor(chapter) {
+    return (config.audioBaseUrl || 'audio/') + chapter.filename;
+  }
+
+  function bookTime() {
+    if (!currentBook) return 0;
+    var ch = currentBook.chapters[currentChapterIdx];
+    if (!ch) return 0;
+    return ch.start + (audio.currentTime || 0);
+  }
+
+  function bookDuration() {
+    return currentBook ? currentBook.duration : 0;
+  }
+
   function getProgress(bookIdx) {
     try {
       var val = localStorage.getItem('rs-progress-' + bookIdx);
-      if (!val) return { time: 0, progress: 0 };
-      return JSON.parse(val);
+      if (!val) return { bookTime: 0, progress: 0 };
+      var p = JSON.parse(val);
+      // Backward-compat: old format stored `time` (book-relative).
+      if (p.time !== undefined && p.bookTime === undefined) p.bookTime = p.time;
+      return p;
     } catch (e) {
-      return { time: 0, progress: 0 };
+      return { bookTime: 0, progress: 0 };
     }
   }
 
   function saveProgress() {
     if (currentBook === null || currentBookIdx === null) return;
-    var p = audio.currentTime / (audio.duration || 1);
-    localStorage.setItem('rs-progress-' + currentBookIdx, JSON.stringify({ time: audio.currentTime, progress: p }));
+    var bt = bookTime();
+    var dur = bookDuration() || 1;
+    var p = bt / dur;
+    var ch = currentBook.chapters[currentChapterIdx];
+    localStorage.setItem('rs-progress-' + currentBookIdx, JSON.stringify({
+      bookTime: bt,
+      progress: p,
+      chapterIdx: currentChapterIdx,
+      chapterN: ch ? ch.n : null,
+      timeInChapter: audio.currentTime || 0
+    }));
     localStorage.setItem('rs-last-book', String(currentBookIdx));
   }
 
-  // Binary search for chapter at time t
-  function getCurrentChapter() {
-    if (!currentBook) return null;
+  function findChapterIdxAt(bt) {
     var chapters = currentBook.chapters;
-    var t = audio.currentTime;
     var lo = 0, hi = chapters.length - 1;
     while (lo < hi) {
       var mid = (lo + hi + 1) >> 1;
-      if (chapters[mid].start <= t) lo = mid;
+      if (chapters[mid].start <= bt) lo = mid;
       else hi = mid - 1;
     }
-    return chapters[lo];
+    return lo;
+  }
+
+  // Load a chapter into the audio element. timeInChapter = seconds into chapter.
+  // autoplay controls whether to .play() once metadata is ready.
+  function loadChapter(idx, timeInChapter, autoplay) {
+    if (!currentBook) return;
+    if (idx < 0 || idx >= currentBook.chapters.length) return;
+    currentChapterIdx = idx;
+    pendingPlayAfterLoad = !!autoplay;
+    var myGen = ++loadGen;
+
+    var ch = currentBook.chapters[idx];
+    audio.src = audioUrlFor(ch);
+    audio.load();
+
+    var t = Math.max(0, timeInChapter || 0);
+    var onMeta = function () {
+      audio.removeEventListener('loadedmetadata', onMeta);
+      if (myGen !== loadGen) return;  // a newer loadChapter superseded this one
+      try { audio.currentTime = Math.min(t, audio.duration || t); } catch (e) {}
+      if (pendingPlayAfterLoad) {
+        pendingPlayAfterLoad = false;
+        audio.play().catch(function () {});
+      }
+    };
+    audio.addEventListener('loadedmetadata', onMeta);
+  }
+
+  function seekToBookTime(bt, autoplay) {
+    if (!currentBook) return;
+    bt = Math.max(0, Math.min(bt, currentBook.duration));
+    var idx = findChapterIdxAt(bt);
+    var ch = currentBook.chapters[idx];
+    var timeInChapter = bt - ch.start;
+    if (idx === currentChapterIdx) {
+      try { audio.currentTime = timeInChapter; } catch (e) {}
+      if (autoplay) audio.play().catch(function () {});
+    } else {
+      loadChapter(idx, timeInChapter, autoplay);
+    }
+  }
+
+  function getCurrentChapter() {
+    if (!currentBook) return null;
+    return currentBook.chapters[currentChapterIdx] || null;
   }
 
   function getBookTranscript() {
     if (!transcriptData || !currentBook) return null;
-    var slug = currentBook.filename.replace(/\.[^.]+$/, '');
+    var slug = currentBook.slug || currentBook.filename || 'book';
+    if (slug.replace) slug = slug.replace(/\.[^.]+$/, '');
     return transcriptData.books.find(function (b) { return b.slug === slug; }) || null;
   }
 
-  // Binary search for chunk at time within chapter
+  // Binary search for chunk at chapter-local time
   function getCurrentChunk() {
     var bt = getBookTranscript();
     if (!bt) return null;
@@ -77,7 +158,7 @@ var RepoStoryPlayer = (function () {
     if (!ch) return null;
     var ct = bt.chapters.find(function (c) { return c.index === ch.id + 1; });
     if (!ct || !ct.chunks.length) return null;
-    var timeInChapter = audio.currentTime - ch.start;
+    var timeInChapter = audio.currentTime || 0;
     var chunks = ct.chunks;
     var lo = 0, hi = chunks.length - 1;
     while (lo < hi) {
@@ -95,20 +176,30 @@ var RepoStoryPlayer = (function () {
 
   function checkOfflineStatus(book) {
     if (!('caches' in window)) return Promise.resolve(false);
-    var audioUrl = (config.audioBaseUrl || 'audio/') + book.filename;
-    var absoluteUrl = new URL(audioUrl, window.location.href).href;
     return caches.open('audiobook-audio').then(function (cache) {
-      return cache.match(audioUrl).then(function (r) {
-        if (r) return true;
-        return cache.match(absoluteUrl).then(function (r2) { return !!r2; });
+      // Probe the first and last chapter URLs as a quick "fully cached" heuristic.
+      // (A rigorous check would iterate all chapters; this is sufficient for the badge.)
+      var probes = [];
+      if (book.chapters.length) {
+        probes.push(book.chapters[0]);
+        if (book.chapters.length > 1) probes.push(book.chapters[book.chapters.length - 1]);
+      }
+      return Promise.all(probes.map(function (ch) {
+        var url = audioUrlFor(ch);
+        var abs = new URL(url, window.location.href).href;
+        return cache.match(url).then(function (r) {
+          return r || cache.match(abs);
+        });
+      })).then(function (results) {
+        return results.length > 0 && results.every(Boolean);
       });
     }).catch(function () { return false; });
   }
 
   function downloadForOffline(book, btn) {
-    var audioUrl = new URL((config.audioBaseUrl || 'audio/') + book.filename, window.location.href).href;
     btn.classList.add('downloading');
-    btn.innerHTML = '0%';
+    btn.innerHTML = 'Preparing&hellip;';
+    btn.title = 'Downloading all chapters — keep page open';
 
     // Keep screen on during download
     var wakeLock = null;
@@ -118,11 +209,7 @@ var RepoStoryPlayer = (function () {
       }).catch(function () {});
     }
 
-    // Warn before navigating away during download
-    function onBeforeUnload(e) {
-      e.preventDefault();
-      e.returnValue = '';
-    }
+    function onBeforeUnload(e) { e.preventDefault(); e.returnValue = ''; }
     window.addEventListener('beforeunload', onBeforeUnload);
 
     function cleanup() {
@@ -130,66 +217,52 @@ var RepoStoryPlayer = (function () {
       if (wakeLock) { wakeLock.release(); wakeLock = null; }
     }
 
-    btn.title = 'Downloading — keep page open';
-    btn.innerHTML = 'Syncing...';
-
-    // Step 1: Cache all shell files first (fast — under 15MB total)
-    var offlineFiles = ['./', 'player.css', 'player.js', 'feedback.js',
+    // Step 1: cache shell + transcripts
+    var shell = ['./', 'player.css', 'player.js', 'feedback.js',
       'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
-    if (config.transcriptUrl) offlineFiles.push(config.transcriptUrl);
+    if (config.transcriptUrl) shell.push(config.transcriptUrl);
+
+    var total = book.chapters.length;
 
     caches.open('audiobook-audio').then(function (cache) {
-      return Promise.all(offlineFiles.map(function (file) {
-        var absoluteUrl = new URL(file, window.location.href).href;
-        return fetch(absoluteUrl).then(function (r) {
-          if (r.ok) return cache.put(absoluteUrl, r);
+      return Promise.all(shell.map(function (file) {
+        var abs = new URL(file, window.location.href).href;
+        return fetch(abs).then(function (r) {
+          if (r.ok) return cache.put(abs, r);
         }).catch(function () {});
-      }));
-    }).then(function () {
-      // Step 2: Stream audio into cache with progress tracking
-      btn.innerHTML = '0%';
-      return fetch(audioUrl).then(function (response) {
-        if (!response.ok) throw new Error('Download failed');
-        var total = parseInt(response.headers.get('Content-Length') || '0', 10);
-        var loaded = 0;
-        var reader = response.body.getReader();
-
-        var trackedStream = new ReadableStream({
-          pull: function (controller) {
-            return reader.read().then(function (result) {
-              if (result.done) {
-                controller.close();
-                return;
-              }
-              loaded += result.value.length;
-              if (total > 0) {
-                btn.innerHTML = Math.round(loaded / total * 100) + '%';
-              } else if (loaded > 0) {
-                btn.innerHTML = Math.round(loaded / (1024 * 1024)) + 'MB';
-              }
-              controller.enqueue(result.value);
+      })).then(function () { return cache; });
+    }).then(function (cache) {
+      // Step 2: each chapter, sequentially. Already-cached chapters are
+      // skipped silently (so resume after interruption picks up cleanly,
+      // and the counter only flashes on chapters that actually fetch).
+      var chain = Promise.resolve();
+      book.chapters.forEach(function (ch, i) {
+        chain = chain.then(function () {
+          var url = audioUrlFor(ch);
+          var abs = new URL(url, window.location.href).href;
+          return cache.match(abs).then(function (existing) {
+            if (existing) return;  // already cached → skip, no UI flash
+            btn.innerHTML = 'Ch ' + (i + 1) + '/' + total;
+            return fetch(abs).then(function (r) {
+              if (!r.ok) throw new Error('fetch ' + url + ' failed');
+              return r.blob().then(function (blob) {
+                return cache.put(abs, new Response(blob, { headers: r.headers }));
+              });
             });
-          }
-        });
-
-        var trackedResponse = new Response(trackedStream, {
-          headers: response.headers
-        });
-
-        return caches.open('audiobook-audio').then(function (cache) {
-          return cache.put(audioUrl, trackedResponse);
+          });
         });
       });
+      return chain;
     }).then(function () {
       cleanup();
       btn.classList.remove('downloading');
       btn.classList.add('downloaded');
-      btn.innerHTML = '&#10003;';
+      btn.innerHTML = 'Downloaded &#10003;';
       btn.title = 'Available offline';
     }).catch(function () {
       cleanup();
       btn.classList.remove('downloading');
-      btn.innerHTML = '&#8615;';
+      btn.innerHTML = 'Download &#8615;';
       btn.title = 'Download failed — try again';
     });
   }
@@ -219,8 +292,8 @@ var RepoStoryPlayer = (function () {
 
       var dlBtn = document.createElement('button');
       dlBtn.className = 'dl-btn';
-      dlBtn.innerHTML = '&#8615;';
-      dlBtn.title = 'Download for offline';
+      dlBtn.innerHTML = 'Download &#8615;';
+      dlBtn.title = 'Download all chapters for offline';
       dlBtn.onclick = function (e) {
         e.stopPropagation();
         if (dlBtn.classList.contains('downloaded') || dlBtn.classList.contains('downloading')) return;
@@ -230,7 +303,7 @@ var RepoStoryPlayer = (function () {
       checkOfflineStatus(book).then(function (cached) {
         if (cached) {
           dlBtn.classList.add('downloaded');
-          dlBtn.innerHTML = '&#10003;';
+          dlBtn.innerHTML = 'Downloaded &#10003;';
           dlBtn.title = 'Available offline';
         }
       });
@@ -268,7 +341,7 @@ var RepoStoryPlayer = (function () {
       var li = document.createElement('li');
       li.id = 'ch-' + i;
       li.setAttribute('data-ch', i + 1);
-      var dur = ch.end - ch.start;
+      var dur = ch.duration || (ch.end - ch.start);
 
       var progressEl = document.createElement('div');
       progressEl.className = 'ch-progress';
@@ -294,7 +367,7 @@ var RepoStoryPlayer = (function () {
         e.stopPropagation();
         didDrag = false;
         li.classList.add('scrubbing');
-        scrubbing = { li: li, ch: ch, dur: dur };
+        scrubbing = { li: li, ch: ch, idx: i, dur: dur };
       });
 
       li.addEventListener('mousedown', function (e) {
@@ -305,8 +378,7 @@ var RepoStoryPlayer = (function () {
       li.addEventListener('click', function (e) {
         if (didDrag) return;
         if (e.target === scrubberEl) return;
-        audio.currentTime = ch.start;
-        audio.play();
+        loadChapter(i, 0, true);
       });
 
       list.appendChild(li);
@@ -329,11 +401,21 @@ var RepoStoryPlayer = (function () {
     var rect = scrubbing.li.getBoundingClientRect();
     var pct = (e.clientX - rect.left) / rect.width;
     pct = Math.max(0, Math.min(1, pct));
-    audio.currentTime = scrubbing.ch.start + pct * scrubbing.dur;
+    var timeInChapter = pct * scrubbing.dur;
+    if (scrubbing.idx === currentChapterIdx) {
+      try { audio.currentTime = timeInChapter; } catch (e) {}
+    }
   }
 
   function handleScrubEnd() {
     if (!scrubbing) return;
+    if (scrubbing.idx !== currentChapterIdx) {
+      // User scrubbed within a non-loaded chapter — load it at the scrub position.
+      var rect = scrubbing.li.getBoundingClientRect();
+      // We don't have the final pct here; use whatever the in-progress drag set.
+      // Simpler: if they scrubbed, treat as a click → seek to start of that chapter.
+      loadChapter(scrubbing.idx, 0, true);
+    }
     scrubbing.li.classList.remove('scrubbing');
     scrubbing = null;
   }
@@ -354,7 +436,6 @@ var RepoStoryPlayer = (function () {
       transcriptPanel.style.flex = '0 0 ' + (100 - leftPct) + '%';
     }
 
-    // Mouse
     divider.addEventListener('mousedown', function (e) {
       e.preventDefault();
       dividerDragging = true;
@@ -370,7 +451,6 @@ var RepoStoryPlayer = (function () {
       divider.classList.remove('dragging');
     });
 
-    // Touch
     divider.addEventListener('touchstart', function (e) {
       e.preventDefault();
       dividerDragging = true;
@@ -400,7 +480,6 @@ var RepoStoryPlayer = (function () {
     var ct = bt.chapters.find(function (c) { return c.index === chapterIndex; });
     if (!ct) { chunksEl.innerHTML = ''; return; }
 
-    var slug = currentBook.filename.replace(/\.[^.]+$/, '');
     chunksEl.innerHTML = '';
 
     ct.chunks.forEach(function (chunk) {
@@ -413,7 +492,13 @@ var RepoStoryPlayer = (function () {
       textSpan.textContent = chunk.text;
       div.onclick = function () {
         var ch = currentBook.chapters[chapterIndex - 1];
-        if (ch) { audio.currentTime = ch.start + chunk.start; audio.play(); }
+        if (!ch) return;
+        if ((chapterIndex - 1) === currentChapterIdx) {
+          try { audio.currentTime = chunk.start; } catch (e) {}
+          audio.play().catch(function () {});
+        } else {
+          loadChapter(chapterIndex - 1, chunk.start, true);
+        }
       };
 
       div.appendChild(textSpan);
@@ -432,16 +517,15 @@ var RepoStoryPlayer = (function () {
     requestAnimationFrame(updatePlayer);
     if (!currentBook) return;
 
-    var t = audio.currentTime;
-    var d = audio.duration || currentBook.duration;
+    var bt = bookTime();
+    var d = bookDuration();
 
-    // Only update text when it actually changes (avoid DOM thrash)
-    var ft = formatTime(t);
+    var ft = formatTime(bt);
     if (ft !== lastFormattedTime) {
       lastFormattedTime = ft;
       dom.currentTime.textContent = ft;
     }
-    dom.progress.style.width = (t / d * 100) + '%';
+    dom.progress.style.width = (d > 0 ? (bt / d * 100) : 0) + '%';
 
     var paused = audio.paused;
     if (paused !== lastPlayState) {
@@ -453,9 +537,7 @@ var RepoStoryPlayer = (function () {
     var ch = getCurrentChapter();
     if (!ch) return;
 
-    // Only do work when chapter changes
     if (ch.id !== lastActiveChapterId) {
-      // Remove active from old chapter
       if (lastActiveChapterId !== null && chapterLis[lastActiveChapterId]) {
         chapterLis[lastActiveChapterId].classList.remove('active');
         chapterProgs[lastActiveChapterId].style.width = '0%';
@@ -471,15 +553,13 @@ var RepoStoryPlayer = (function () {
       renderTranscriptChunks(ch.id + 1);
     }
 
-    // Update progress on active chapter only (one element, not 141)
-    var chDur = ch.end - ch.start;
-    var pct = Math.max(0, Math.min(100, (t - ch.start) / chDur * 100));
+    var chDur = ch.duration || (ch.end - ch.start);
+    var pct = Math.max(0, Math.min(100, ((audio.currentTime || 0) / chDur) * 100));
     chapterProgs[ch.id].style.width = pct + '%';
     if (chapterScrubs[ch.id]) {
       chapterScrubs[ch.id].style.left = 'calc(' + pct + '% - 6px)';
     }
 
-    // Auto-scroll chapter list (only on chapter change, handled above via flag reset)
     if (!userScrolledChapters) {
       var activeLi = chapterLis[ch.id];
       var chList = dom.chapterList;
@@ -491,7 +571,6 @@ var RepoStoryPlayer = (function () {
       }
     }
 
-    // Update active chunk highlight
     var cur = getCurrentChunk();
     if (cur) {
       var chunkId = cur.chunk.index;
@@ -527,7 +606,6 @@ var RepoStoryPlayer = (function () {
     container.querySelector('#library').style.display = 'none';
     container.querySelector('#player-view').classList.add('active');
 
-    // Cache DOM references for the player view
     dom.currentTime = container.querySelector('#current-time');
     dom.totalTime = container.querySelector('#total-time');
     dom.progress = container.querySelector('#progress');
@@ -540,17 +618,15 @@ var RepoStoryPlayer = (function () {
 
     dom.bookTitle.textContent = currentBook.title;
 
-    audio.src = (config.audioBaseUrl || 'audio/') + currentBook.filename;
-    audio.load();
-
-    var p = getProgress(idx);
-    audio.addEventListener('loadedmetadata', function onload() {
-      audio.currentTime = p.time || 0;
-      audio.removeEventListener('loadedmetadata', onload);
-    });
-
     renderChapters();
     renderTranscript();
+
+    var p = getProgress(idx);
+    var bt = Math.max(0, Math.min(p.bookTime || 0, currentBook.duration));
+    var startIdx = findChapterIdxAt(bt);
+    var startTimeInChapter = bt - currentBook.chapters[startIdx].start;
+    loadChapter(startIdx, startTimeInChapter, false);
+
     updatePlayer();
   }
 
@@ -567,30 +643,41 @@ var RepoStoryPlayer = (function () {
   }
 
   function togglePlay() { audio.paused ? audio.play() : audio.pause(); }
-  function skip(s) { audio.currentTime = Math.max(0, audio.currentTime + s); }
+  function skip(s) { seekToBookTime(bookTime() + s, !audio.paused); }
 
   function prevChapter() {
-    var ch = getCurrentChapter();
-    if (!ch || ch.id === 0) { audio.currentTime = 0; return; }
-    audio.currentTime = currentBook.chapters[ch.id - 1].start;
+    if (!currentBook) return;
+    if (currentChapterIdx === 0) {
+      try { audio.currentTime = 0; } catch (e) {}
+      return;
+    }
+    loadChapter(currentChapterIdx - 1, 0, !audio.paused);
   }
 
   function nextChapter() {
-    var ch = getCurrentChapter();
-    if (!ch || ch.id >= currentBook.chapters.length - 1) return;
-    audio.currentTime = currentBook.chapters[ch.id + 1].start;
+    if (!currentBook) return;
+    if (currentChapterIdx >= currentBook.chapters.length - 1) return;
+    loadChapter(currentChapterIdx + 1, 0, !audio.paused);
   }
 
   function seekTo(e) {
     var bar = dom.trackBar;
     var pct = (e.clientX - bar.getBoundingClientRect().left) / bar.offsetWidth;
-    audio.currentTime = pct * (audio.duration || currentBook.duration);
+    seekToBookTime(pct * (currentBook.duration || 0), !audio.paused);
   }
 
   function cycleSpeed() {
     speedIdx = (speedIdx + 1) % speeds.length;
     audio.playbackRate = speeds[speedIdx];
     config.container.querySelector('#speed-btn').textContent = speeds[speedIdx] + 'x';
+  }
+
+  function onChapterEnded() {
+    saveProgress();
+    if (!currentBook) return;
+    if (currentChapterIdx < currentBook.chapters.length - 1) {
+      loadChapter(currentChapterIdx + 1, 0, true);
+    }
   }
 
   // --- Init ---
@@ -609,7 +696,6 @@ var RepoStoryPlayer = (function () {
     RepoStoryFeedback.init(opts.feedbackUrl);
     loadTranscripts(opts.transcriptUrl);
 
-    // Build DOM
     config.container.innerHTML = '' +
       '<div class="library" id="library">' +
       '  <h1>' + (config.title || 'audiobook') + '</h1>' +
@@ -655,12 +741,10 @@ var RepoStoryPlayer = (function () {
       '  </div>' +
       '</div>';
 
-    // Create audio element
     audio = document.createElement('audio');
     audio.preload = 'metadata';
     config.container.appendChild(audio);
 
-    // Bind events
     config.container.querySelector('#back-btn').onclick = showLibrary;
     config.container.querySelector('#track-bar').onclick = seekTo;
     config.container.querySelector('#btn-back30').onclick = function () { skip(-30); };
@@ -670,7 +754,6 @@ var RepoStoryPlayer = (function () {
     config.container.querySelector('#btn-fwd30').onclick = function () { skip(30); };
     config.container.querySelector('#speed-btn').onclick = cycleSpeed;
 
-    // Detect user-initiated scrolling to pause auto-scroll
     config.container.querySelector('#chapter-list').addEventListener('wheel', function () {
       userScrolledChapters = true;
     });
@@ -686,7 +769,6 @@ var RepoStoryPlayer = (function () {
       if (e.clientX > rect.right - 20) userScrolledTranscript = true;
     });
 
-    // Touch scroll detection for mobile
     config.container.querySelector('#chapter-list').addEventListener('touchmove', function () {
       userScrolledChapters = true;
     });
@@ -694,28 +776,21 @@ var RepoStoryPlayer = (function () {
       userScrolledTranscript = true;
     });
 
-    // Global scrub drag handlers
     document.addEventListener('mousemove', handleScrubMove);
     document.addEventListener('mouseup', handleScrubEnd);
 
-    // Draggable panel divider
     initDivider();
 
-    // Save progress on page close/refresh
     window.addEventListener('beforeunload', saveProgress);
-
-    // Save progress periodically
     setInterval(saveProgress, 5000);
-    audio.addEventListener('ended', saveProgress);
+    audio.addEventListener('ended', onChapterEnded);
 
-    // Register service worker for offline support
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js').catch(function () {});
     }
 
     renderLibrary();
 
-    // Auto-resume last open book
     var lastBook = localStorage.getItem('rs-last-book');
     if (lastBook !== null) {
       var idx = parseInt(lastBook, 10);

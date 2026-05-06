@@ -47,6 +47,37 @@ var RepoStoryPlayer = (function () {
     return (config.audioBaseUrl || 'audio/') + chapter.filename;
   }
 
+  // --- URL routing ---
+  // Hash format: '#/<slug>'. Library = empty hash.
+
+  function slugify(s) {
+    return String(s || '').toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60);
+  }
+
+  function bookSlug(book) {
+    if (book.slug && book.slug !== 'book') return book.slug;
+    var s = slugify(book.title);
+    return s || book.slug || 'book';
+  }
+
+  function bookIdxFromSlug(slug) {
+    if (!slug) return -1;
+    for (var i = 0; i < config.books.length; i++) {
+      if (bookSlug(config.books[i]) === slug) return i;
+    }
+    return -1;
+  }
+
+  function setUrlForBook(idx) {
+    var target = idx == null ? '' : '#/' + encodeURIComponent(bookSlug(config.books[idx]));
+    if (window.location.hash === target) return;
+    var url = target || (window.location.pathname + window.location.search);
+    history.pushState(null, '', url);
+  }
+
   function bookTime() {
     if (!currentBook) return 0;
     var ch = currentBook.chapters[currentChapterIdx];
@@ -594,13 +625,14 @@ var RepoStoryPlayer = (function () {
 
   // --- Actions ---
 
-  function openBook(idx) {
+  function openBook(idx, opts) {
     currentBook = config.books[idx];
     currentBookIdx = idx;
     lastActiveChapterId = null;
     lastActiveChunkId = null;
     lastFormattedTime = '';
     lastPlayState = null;
+    if (!opts || opts.updateUrl !== false) setUrlForBook(idx);
     var container = config.container;
 
     container.querySelector('#library').style.display = 'none';
@@ -630,16 +662,29 @@ var RepoStoryPlayer = (function () {
     updatePlayer();
   }
 
-  function showLibrary() {
+  function showLibrary(opts) {
     saveProgress();
     audio.pause();
     currentBook = null;
     currentBookIdx = null;
     localStorage.removeItem('rs-last-book');
+    if (!opts || opts.updateUrl !== false) setUrlForBook(null);
     var container = config.container;
     container.querySelector('#player-view').classList.remove('active');
     container.querySelector('#library').style.display = 'block';
     renderLibrary();
+  }
+
+  function applyUrlState() {
+    var m = window.location.hash.match(/^#\/(.+)$/);
+    if (m) {
+      var idx = bookIdxFromSlug(decodeURIComponent(m[1]));
+      if (idx >= 0) {
+        if (idx !== currentBookIdx) openBook(idx, { updateUrl: false });
+        return;
+      }
+    }
+    if (currentBook !== null) showLibrary({ updateUrl: false });
   }
 
   function togglePlay() { audio.paused ? audio.play() : audio.pause(); }
@@ -791,11 +836,19 @@ var RepoStoryPlayer = (function () {
 
     renderLibrary();
 
-    var lastBook = localStorage.getItem('rs-last-book');
-    if (lastBook !== null) {
-      var idx = parseInt(lastBook, 10);
-      if (idx >= 0 && idx < config.books.length) {
-        openBook(idx);
+    window.addEventListener('popstate', applyUrlState);
+
+    var hashMatch = window.location.hash.match(/^#\/(.+)$/);
+    var hashIdx = hashMatch ? bookIdxFromSlug(decodeURIComponent(hashMatch[1])) : -1;
+    if (hashIdx >= 0) {
+      openBook(hashIdx, { updateUrl: false });
+    } else {
+      var lastBook = localStorage.getItem('rs-last-book');
+      if (lastBook !== null) {
+        var idx = parseInt(lastBook, 10);
+        if (idx >= 0 && idx < config.books.length) {
+          openBook(idx);
+        }
       }
     }
   }

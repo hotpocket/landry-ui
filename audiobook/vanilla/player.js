@@ -780,7 +780,14 @@ var RepoStoryPlayer = (function () {
     if (!url) return;
     fetch(url)
       .then(function (r) { return r.json(); })
-      .then(function (data) { transcriptData = data; })
+      .then(function (data) {
+        transcriptData = data;
+        // The data often arrives after the first chapter has already rendered.
+        // The tick loop marked that chapter as active (lastActiveChapterId) and
+        // won't re-render it, so the transcript would stay blank until the user
+        // switches chapters. Render the current chapter now that we have data.
+        if (currentBook) renderTranscriptChunks(currentChapterIdx + 1);
+      })
       .catch(function () {});
   }
 

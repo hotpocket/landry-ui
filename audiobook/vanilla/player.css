@@ -103,6 +103,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .transcript-chunk .chunk-flag { flex-shrink: 0; opacity: 0; transition: opacity 0.15s; }
 .transcript-chunk:hover .chunk-flag,
 .transcript-chunk .chunk-flag.flagged { opacity: 1; }
+/* Scene-transition divider ("* * *"): centered, spaced, non-interactive. */
+.transcript-chunk.scene-break { justify-content: center; cursor: default; padding: 0.9rem 0; }
+.transcript-chunk.scene-break .chunk-text { flex: 0; text-align: center; letter-spacing: 0.5em; color: #555; }
+.transcript-chunk.scene-break.active .chunk-text { color: #4a9eff; }
 .chunk-flag button { background: none; border: none; cursor: pointer; font-size: 0.9rem; padding: 0.2rem 0.4rem; border-radius: 4px; color: #555; }
 .chunk-flag button:hover { color: #ef4444; background: rgba(239, 68, 68, 0.1); }
 .chunk-flag button.flagged { color: #ef4444; }

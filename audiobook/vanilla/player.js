@@ -134,6 +134,7 @@ var RepoStoryPlayer = (function () {
   function loadChapter(idx, timeInChapter, autoplay) {
     if (!currentBook) return;
     if (idx < 0 || idx >= currentBook.chapters.length) return;
+    cancelScenePause();
     currentChapterIdx = idx;
     pendingPlayAfterLoad = !!autoplay;
     var myGen = ++loadGen;
@@ -516,6 +517,7 @@ var RepoStoryPlayer = (function () {
     ct.chunks.forEach(function (chunk) {
       var div = document.createElement('div');
       div.className = 'transcript-chunk';
+      if (isSceneBreakChunk(chunk)) div.className += ' scene-break';
       div.id = 'tc-' + chapterIndex + '-' + chunk.index;
 
       var textSpan = document.createElement('span');
@@ -544,6 +546,51 @@ var RepoStoryPlayer = (function () {
   var lastFormattedTime = '';
   var lastPlayState = null;
 
+  // Scene-transition pause. The source marks scene changes with a "* * *"
+  // divider that the audio does NOT speak; we hold playback briefly when
+  // crossing one (detected via the transcript) so scenes feel separated.
+  var SCENE_PAUSE_MS = 3000;
+  var lastTickTime = 0;
+  var lastTickChapterId = null;
+  var scenePauseTimer = null;
+
+  function isSceneBreakChunk(chunk) {
+    if (!chunk) return false;
+    if (chunk.scene_break) return true;
+    var t = chunk.text || '';
+    return /^[\s*]+$/.test(t) && (t.match(/\*/g) || []).length >= 2;
+  }
+
+  function cancelScenePause() {
+    if (scenePauseTimer !== null) { clearTimeout(scenePauseTimer); scenePauseTimer = null; }
+  }
+
+  // Called each frame: if normal playback just crossed a scene-break marker,
+  // pause for SCENE_PAUSE_MS then resume. Big time jumps (seeks) and chapter
+  // changes re-arm without triggering.
+  function checkSceneBreakPause(ch, t) {
+    var lt = lastTickTime, lc = lastTickChapterId;
+    lastTickTime = t;
+    lastTickChapterId = ch.id;
+    if (scenePauseTimer !== null || audio.paused) return;  // mid-pause or stopped
+    if (ch.id !== lc) return;                               // chapter just changed
+    if (t <= lt || t - lt > 1.5) return;                    // no progress, or a seek
+    var bt = getBookTranscript();
+    var ct = bt && bt.chapters.find(function (c) { return c.index === ch.id + 1; });
+    if (!ct) return;
+    for (var i = 0; i < ct.chunks.length; i++) {
+      var c = ct.chunks[i];
+      if (isSceneBreakChunk(c) && c.start > lt && c.start <= t) {
+        audio.pause();
+        scenePauseTimer = setTimeout(function () {
+          scenePauseTimer = null;
+          if (currentBook && audio.paused) audio.play().catch(function () {});
+        }, SCENE_PAUSE_MS);
+        return;
+      }
+    }
+  }
+
   function updatePlayer() {
     requestAnimationFrame(updatePlayer);
     if (!currentBook) return;
@@ -567,6 +614,8 @@ var RepoStoryPlayer = (function () {
 
     var ch = getCurrentChapter();
     if (!ch) return;
+
+    checkSceneBreakPause(ch, audio.currentTime || 0);
 
     if (ch.id !== lastActiveChapterId) {
       if (lastActiveChapterId !== null && chapterLis[lastActiveChapterId]) {

@@ -503,27 +503,6 @@ var RepoStoryPlayer = (function () {
     if (dom.transcriptChunks) dom.transcriptChunks.innerHTML = '';
   }
 
-  // Transcript sync-quality badge (dot next to the chapter title). Timing per
-  // chapter comes from build_transcripts.py: "chunks"/"silence" are exact,
-  // "estimated" may drift a few seconds; absent (e.g. older books) = no badge.
-  var SYNC_LABELS = {
-    chunks: 'Transcript sync: exact (measured from generation)',
-    silence: 'Transcript sync: calculated (audio-verified)',
-    estimated: 'Transcript sync: estimated — highlight may drift a few seconds'
-  };
-
-  function updateSyncBadge(chapterIndex) {
-    if (!dom.syncBadge) return;
-    var bt = getBookTranscript();
-    var ct = bt && bt.chapters.find(function (c) { return c.index === chapterIndex; });
-    var timing = ct && ct.timing;
-    dom.syncBadge.className = 'sync-badge' + (SYNC_LABELS[timing] ? ' ' + timing : '');
-    dom.syncBadge.title = SYNC_LABELS[timing] || '';
-    if (dom.transcriptChunks) {
-      dom.transcriptChunks.classList.toggle('timing-estimated', timing === 'estimated');
-    }
-  }
-
   function renderTranscriptChunks(chapterIndex) {
     var chunksEl = dom.transcriptChunks;
     if (!chunksEl) return;
@@ -646,7 +625,6 @@ var RepoStoryPlayer = (function () {
       chapterLis[ch.id].classList.add('active');
 
       dom.chapterTitle.textContent = ch.title;
-      updateSyncBadge(ch.id + 1);
 
       lastActiveChapterId = ch.id;
       lastActiveChunkId = null;
@@ -714,7 +692,6 @@ var RepoStoryPlayer = (function () {
     dom.progress = container.querySelector('#progress');
     dom.playBtn = container.querySelector('#play-btn');
     dom.chapterTitle = container.querySelector('#chapter-title');
-    dom.syncBadge = container.querySelector('#sync-badge');
     dom.bookTitle = container.querySelector('#book-title');
     dom.chapterList = container.querySelector('#chapter-list');
     dom.trackBar = container.querySelector('#track-bar');
@@ -829,7 +806,7 @@ var RepoStoryPlayer = (function () {
       '  <button class="back-btn" id="back-btn">&larr; Library</button>' +
       '  <div class="now-playing">' +
       '    <div class="book-title" id="book-title"></div>' +
-      '    <div class="chapter-title"><span id="chapter-title"></span><span class="sync-badge" id="sync-badge"></span></div>' +
+      '    <div class="chapter-title" id="chapter-title"></div>' +
       '  </div>' +
       '  <div class="content-area">' +
       '    <div class="chapter-panel" style="flex: 0 0 50%">' +

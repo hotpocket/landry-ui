@@ -104,17 +104,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .transcript-chunk:hover .chunk-flag,
 .transcript-chunk .chunk-flag.flagged { opacity: 1; }
 /* Scene-transition divider ("* * *"): centered, spaced, non-interactive. */
-/* Transcript sync-quality badge: dot after the chapter title. Solid green =
-   exact (chunk WAVs), solid teal = calculated (audio-verified silence map),
-   hollow amber = estimated (may drift). Hidden when timing is unknown. */
-.sync-badge { display: none; width: 8px; height: 8px; border-radius: 50%; margin-left: 0.5rem; vertical-align: middle; flex-shrink: 0; }
-.sync-badge.chunks { display: inline-block; background: #3dbf6e; }
-.sync-badge.silence { display: inline-block; background: #35b8b0; }
-.sync-badge.estimated { display: inline-block; background: transparent; border: 2px solid #e0a63c; width: 6px; height: 6px; }
-/* Estimated timing: soften the active-row highlight (dashed edge) so the
-   "don't trust this to the second" cue sits where the eyes are. */
-.transcript-chunks.timing-estimated .transcript-chunk.active { background: none; border-left: 2px dashed #e0a63c; border-radius: 0; padding-left: calc(0.75rem - 2px); }
-
 .transcript-chunk.scene-break { justify-content: center; cursor: default; padding: 0.9rem 0; }
 .transcript-chunk.scene-break .chunk-text { flex: 0; text-align: center; letter-spacing: 0.5em; color: #555; }
 .transcript-chunk.scene-break.active .chunk-text { color: #4a9eff; }

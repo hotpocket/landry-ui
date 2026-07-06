@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# vault-digest — cheap, file-based reads of an Obsidian-style markdown vault.
+# No Obsidian app, no CLI, no GUI: pure grep/awk over the .md files on disk, so
+# it works headless and parallel sessions in different repos never contend.
+# The frontmatter (summary/type/concerns/audience) IS the Level-0 index; this
+# reads that slice instead of whole note bodies, so a vault scan costs a few
+# hundred tokens, not tens of thousands.
+#
+# Usage:
+#   vault-digest summaries [SUBDIR]   # "path :: summary" for every note (Level 0)
+#   vault-digest fm FILE              # just the frontmatter block of one note
+#   vault-digest type TYPE [SUBDIR]   # notes whose frontmatter `type:` == TYPE
+#   vault-digest concern NAME         # notes whose `concerns:` includes NAME
+#   vault-digest recap                # latest session-recap pointer (Session Log)
+#   vault-digest todos [PROJECT]      # open `- [ ]` todos
+#   vault-digest backlinks NOTE       # files containing [[NOTE]]
+#   vault-digest search QUERY         # body grep (Level 2 fallback), file:line
+set -euo pipefail
+
+# --- vault discovery (file-only; no Obsidian) ---
+discover_vault() {
+  if [[ -n "${OBSIDIAN_VAULT_PATH:-}" && -d "$OBSIDIAN_VAULT_PATH" ]]; then
+    echo "$OBSIDIAN_VAULT_PATH"; return; fi
+  local root; root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  [[ -f "$root/vault/Home.md" ]] && { echo "$root/vault"; return; }
+  [[ -d "$PWD/vault" ]] && { echo "$PWD/vault"; return; }
+  echo "$root/vault"   # best guess; commands tolerate its absence
+}
+V="$(discover_vault)"
+
+# first-frontmatter-block field extractor (handles `key: value` and `key: [a,b]`)
+fm_field() { awk -v k="$1" '
+  /^---[[:space:]]*$/ { if (++n==2) exit; next }
+  n==1 && index($0, k":")==1 { sub("^"k":[[:space:]]*",""); print; exit }' "$2"; }
+
+list_md() { find "$V/${1:-}" -name '*.md' 2>/dev/null | sort; }
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  summaries)
+    list_md "${1:-}" | while read -r f; do
+      s="$(fm_field summary "$f")"; printf '%s :: %s\n' "${f#"$V"/}" "${s:-(no summary)}"
+    done ;;
+  fm)
+    awk '/^---[[:space:]]*$/{c++; print; if(c==2)exit; next} c==1{print}' "$1" ;;
+  type)
+    t="$1"; list_md "${2:-}" | while read -r f; do
+      [[ "$(fm_field type "$f")" == "$t" ]] && printf '%s :: %s\n' "${f#"$V"/}" "$(fm_field summary "$f")"
+    done ;;
+  concern)
+    c="$1"; list_md | while read -r f; do
+      fm_field concerns "$f" | grep -qw "$c" && printf '%s :: %s\n' "${f#"$V"/}" "$(fm_field summary "$f")"
+    done ;;
+  recap)
+    log="$V/sessions/Session Log.md"
+    if [[ -f "$log" ]]; then
+      r="$(grep -oE '\[\[20[0-9]{2}-[^]]+\]\]' "$log" | tail -1 || true)"
+      echo "${r:-(none yet)}"
+    else echo "(no Session Log)"; fi ;;
+  todos)
+    # find (not the *.md glob) so dotted project files like `.configs.md` match
+    if [[ -n "${1:-}" ]]; then files="$V/todos/$1.md"
+    else files="$(find "$V/todos" -maxdepth 1 -name '*.md' 2>/dev/null || true)"; fi
+    [[ -n "$files" ]] || { echo "(no todos files)"; exit 0; }   # never grep stdin
+    grep -nE '^- \[ \]' $files 2>/dev/null || echo "(no open todos)" ;;
+  backlinks)
+    grep -rl --include='*.md' "\[\[$1" "$V" 2>/dev/null | sed "s#$V/##" || true ;;
+  search)
+    grep -rniE --include='*.md' "$*" "$V" 2>/dev/null | sed "s#$V/##" || true ;;
+  *)
+    sed -n '9,18p' "$0" ;;   # help == the usage comment block
+esac

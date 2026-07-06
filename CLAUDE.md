@@ -9,6 +9,7 @@ Reusable UI components for brandonlandry.com projects.
 - React components are TypeScript, use Tailwind for styling.
 - All platform variants implement the same features against the same data formats (manifest.json, transcripts.json, feedback API).
 - Do not include AI attribution in commit messages or source files.
+- **Durable over accurate — always.** Prefer references that survive commits, pushes, checkouts, and moves over ones merely correct now: relative/runtime-derived paths (never hardcoded absolutes), content hashes over mtimes, one source of truth over copied literals.
 
 ## Components
 
@@ -25,3 +26,22 @@ Reusable UI components for brandonlandry.com projects.
 ## Consumers
 
 Projects pull components via `luinst` (shallow clone fetch). Fetched directories are gitignored in consumer repos.
+
+## Session conduct
+
+Session-start orientation is injected by the global `SessionStart` router
+(`~/bin/claude-orient`), which runs `scripts/session-start.sh`: latest recap
+pointer + open-todo count. **Vault access is file-first** — `scripts/vault-digest
+summaries|recap|todos|search <q>` (grep/awk over `vault/` frontmatter, no
+Obsidian). Read a full note only after a summary points to it. When you discover
+something durable, write it back to `vault/`; at session end, offer `/vault recap`.
+
+Consumers (karagame) fetch this player at deploy time, so **commit + push here
+first** — an uncommitted player change is overwritten by the fetch, and a
+same-length edit (e.g. a constant) is invisible to size-based change detection.
+
+## Docs layout
+
+- `docs/` — generated working notes, plans, analyses.
+- `docs/reports/` — persistent, shareable deliverables.
+- `docs/logs/` — transient process output (gitignored).

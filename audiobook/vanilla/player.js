@@ -549,7 +549,7 @@ var RepoStoryPlayer = (function () {
   // Scene-transition pause. The source marks scene changes with a "* * *"
   // divider that the audio does NOT speak; we hold playback briefly when
   // crossing one (detected via the transcript) so scenes feel separated.
-  var SCENE_PAUSE_MS = 3000;
+  var SCENE_PAUSE_MS = 2000;
   var lastTickTime = 0;
   var lastTickChapterId = null;
   var scenePauseTimer = null;

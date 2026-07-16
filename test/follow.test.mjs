@@ -154,6 +154,28 @@ if (!rbtn) {
   check(landed, 'F2: releasing the drag seeks across chapters (75% → ch2 @ ~15s)');
 }
 
+// G: track-bar thumb — hidden at rest, appears on hover, rides the progress edge
+{
+  const thumbScale = () => page.evaluate(() => {
+    const s = getComputedStyle(document.querySelector('#progress'), '::after');
+    if (!s || s.content === 'none') return null;
+    const m = s.transform.match(/matrix\(([-\d.]+)/);
+    return m ? parseFloat(m[1]) : 1;
+  });
+  await page.mouse.move(10, 10);  // away from the bar
+  await new Promise((r) => setTimeout(r, 250));
+  const atRest = await thumbScale();
+  const bb2 = await page.evaluate(() => {
+    const r = document.querySelector('#track-bar').getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  });
+  await page.mouse.move(bb2.x, bb2.y);
+  await new Promise((r) => setTimeout(r, 250));
+  const onHover = await thumbScale();
+  check(atRest !== null && atRest < 0.1, `G1: thumb hidden at rest (scale ${atRest})`);
+  check(onHover !== null && onHover > 0.9, `G2: thumb shown on hover (scale ${onHover})`);
+}
+
 await browser.close();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

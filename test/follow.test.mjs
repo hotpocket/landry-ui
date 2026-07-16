@@ -97,6 +97,30 @@ if (!btn) {
   check(onState && (await activeVisible()), 'D2: button click re-enables + snaps to active chunk');
 }
 
+// E: reading mode — transcript-only view, toggle on/off
+const rbtn = await page.$('#reading-btn');
+if (!rbtn) {
+  bad('E: #reading-btn missing');
+} else {
+  const trWidthBefore = await page.evaluate(() => document.querySelector('.transcript-panel').getBoundingClientRect().width);
+  await page.click('#reading-btn');
+  await waitTicks();
+  const state = await page.evaluate(() => ({
+    mode: document.querySelector('#player-view').classList.contains('reading-mode'),
+    chapterW: document.querySelector('.chapter-panel').getBoundingClientRect().width,
+    nowPlayingW: document.querySelector('.now-playing').getBoundingClientRect().width,
+    trW: document.querySelector('.transcript-panel').getBoundingClientRect().width,
+  }));
+  check(state.mode && state.chapterW === 0 && state.nowPlayingW === 0, 'E1: reading mode hides chapters + header chrome');
+  check(state.trW > trWidthBefore * 1.5, 'E2: transcript goes full-width');
+  await page.click('#reading-btn');
+  await waitTicks();
+  const restored = await page.evaluate(() =>
+    !document.querySelector('#player-view').classList.contains('reading-mode') &&
+    document.querySelector('.chapter-panel').getBoundingClientRect().width > 0);
+  check(restored, 'E3: toggling back restores the normal layout');
+}
+
 await browser.close();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

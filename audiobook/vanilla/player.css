@@ -93,11 +93,39 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 
 .transcript-panel-header { display: flex; align-items: center; padding: 0.5rem 0.75rem; flex-shrink: 0; }
 .transcript-panel-header h3 { font-size: 0.75rem; font-weight: 400; color: #555; text-transform: uppercase; letter-spacing: 0.1em; flex: 1; }
-.follow-btn { background: none; border: 1px solid #333; color: #555; border-radius: 6px;
+.follow-btn, .reading-btn { background: none; border: 1px solid #333; color: #555; border-radius: 6px;
   font-size: 0.7rem; line-height: 1; padding: 0.25rem 0.5rem; cursor: pointer;
   text-transform: uppercase; letter-spacing: 0.05em; transition: color 0.15s, border-color 0.15s; }
-.follow-btn:hover { color: #999; }
-.follow-btn.on { color: #4a9eff; border-color: #4a9eff; }
+.follow-btn:hover, .reading-btn:hover { color: #999; }
+.follow-btn.on, .reading-btn.on { color: #4a9eff; border-color: #4a9eff; }
+.reading-btn { margin-left: 0.5rem; }
+
+/* Reading mode: transcript only. Hide chapter panel + header chrome, let the
+   transcript take the full width, bump the text a step, slim the controls.
+   The !important on flex overrides the divider-drag inline style. */
+.player-view.reading-mode .back-btn,
+.player-view.reading-mode .now-playing,
+.player-view.reading-mode .chapter-panel,
+.player-view.reading-mode .panel-divider { display: none; }
+.player-view.reading-mode { padding-top: 0.5rem; }
+.player-view.reading-mode .transcript-panel { flex: 1 1 auto !important; }
+.player-view.reading-mode .transcript-chunk .chunk-text { font-size: 1rem; line-height: 1.65; }
+.player-view.reading-mode .player-controls { padding-top: 0.4rem; padding-bottom: calc(0.4rem + env(safe-area-inset-bottom, 0)); }
+.player-view.reading-mode .controls { margin-top: 0.4rem; }
+
+/* Landscape phones: the header/controls chrome eats the screen — compact it
+   even outside reading mode. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .player-view { padding: 0.25rem 0.5rem 0.25rem; }
+  .back-btn { margin-bottom: 0; padding: 0.15rem 0; }
+  .now-playing { margin-bottom: 0.25rem; }
+  .now-playing .book-title { font-size: 0.85rem; }
+  .now-playing .chapter-title { font-size: 0.75rem; }
+  .content-area { margin-bottom: 0.25rem; }
+  .player-controls { padding: 0.3rem 0.5rem calc(0.3rem + env(safe-area-inset-bottom, 0)); }
+  .controls { margin-top: 0.3rem; gap: 0.5rem; }
+  .controls button { font-size: 0.85rem; }
+}
 
 .transcript-chunks { overflow-y: auto; flex: 1; scroll-behavior: smooth; padding: 0 0.25rem; }
 .transcript-chunk { display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.5rem 0.75rem; border-radius: 6px; margin-bottom: 0.25rem; transition: background 0.15s; cursor: pointer; }

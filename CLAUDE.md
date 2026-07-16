@@ -45,3 +45,9 @@ same-length edit (e.g. a constant) is invisible to size-based change detection.
 - `docs/` — generated working notes, plans, analyses.
 - `docs/reports/` — persistent, shareable deliverables.
 - `docs/logs/` — transient process output (gitignored).
+
+## Tests
+
+Browser tests for the vanilla player: `node test/follow.test.mjs` (Playwright
+from the gstack pin; override with `PLAYWRIGHT_LIB`). Fixture regenerates via
+`test/fixture/gen.sh` (needs ffmpeg).

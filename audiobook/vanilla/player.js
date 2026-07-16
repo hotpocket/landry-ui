@@ -570,6 +570,20 @@ var RepoStoryPlayer = (function () {
     if (btn) btn.classList.toggle('on', on);
     if (on && snap !== false) scrollToActiveChunk();
   }
+
+  // Reading mode: transcript-only view — chapter panel and header chrome
+  // hidden, controls compacted (see .reading-mode rules in player.css).
+  var readingMode = localStorage.getItem('rs-reading') === '1';
+
+  function setReadingMode(on) {
+    readingMode = on;
+    localStorage.setItem('rs-reading', on ? '1' : '0');
+    var view = config.container.querySelector('#player-view');
+    if (view) view.classList.toggle('reading-mode', on);
+    var btn = config.container.querySelector('#reading-btn');
+    if (btn) btn.classList.toggle('on', on);
+    if (followTranscript) scrollToActiveChunk();  // layout change moved things
+  }
   var lastFormattedTime = '';
   var lastPlayState = null;
 
@@ -843,6 +857,7 @@ var RepoStoryPlayer = (function () {
       '      <div class="transcript-panel-header">' +
       '        <h3>Transcript</h3>' +
       '        <button class="follow-btn" id="follow-btn" title="Follow along with playback">&#8982; follow</button>' +
+      '        <button class="reading-btn" id="reading-btn" title="Reading mode — transcript only">&#9707; read</button>' +
       '      </div>' +
       '      <div class="transcript-chunks" id="transcript-chunks"></div>' +
       '    </div>' +
@@ -881,6 +896,8 @@ var RepoStoryPlayer = (function () {
     var followBtn = config.container.querySelector('#follow-btn');
     followBtn.classList.toggle('on', followTranscript);
     followBtn.onclick = function () { setFollow(!followTranscript); };
+    config.container.querySelector('#reading-btn').onclick = function () { setReadingMode(!readingMode); };
+    if (readingMode) setReadingMode(true);
 
     config.container.querySelector('#chapter-list').addEventListener('wheel', function () {
       userScrolledChapters = true;

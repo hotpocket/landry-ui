@@ -158,6 +158,7 @@ var RepoStoryPlayer = (function () {
 
   function seekToBookTime(bt, autoplay) {
     if (!currentBook) return;
+    setFollow(true, false);  // explicit navigation re-arms following
     bt = Math.max(0, Math.min(bt, currentBook.duration));
     var idx = findChapterIdxAt(bt);
     var ch = currentBook.chapters[idx];
@@ -410,6 +411,7 @@ var RepoStoryPlayer = (function () {
       li.addEventListener('click', function (e) {
         if (didDrag) return;
         if (e.target === scrubberEl) return;
+        setFollow(true, false);
         loadChapter(i, 0, true);
       });
 
@@ -441,6 +443,7 @@ var RepoStoryPlayer = (function () {
 
   function handleScrubEnd() {
     if (!scrubbing) return;
+    setFollow(true, false);
     if (scrubbing.idx !== currentChapterIdx) {
       // User scrubbed within a non-loaded chapter — load it at the scrub position.
       var rect = scrubbing.li.getBoundingClientRect();
@@ -526,6 +529,7 @@ var RepoStoryPlayer = (function () {
       div.onclick = function () {
         var ch = currentBook.chapters[chapterIndex - 1];
         if (!ch) return;
+        setFollow(true, false);
         if ((chapterIndex - 1) === currentChapterIdx) {
           try { audio.currentTime = chunk.start; } catch (e) {}
           audio.play().catch(function () {});
@@ -542,7 +546,30 @@ var RepoStoryPlayer = (function () {
   var lastActiveChapterId = null;
   var lastActiveChunkId = null;
   var userScrolledChapters = false;
-  var userScrolledTranscript = false;
+  // Transcript follow: explicit, user-visible state (#follow-btn) instead of
+  // the old hidden scroll heuristic. Manual scroll gestures turn it off;
+  // explicit navigation (chunk/chapter click, seek, skip, prev/next) re-arms.
+  var followTranscript = localStorage.getItem('rs-follow') !== '0';
+
+  function scrollToActiveChunk() {
+    var box = dom.transcriptChunks;
+    if (!box) return;
+    var el = box.querySelector('.transcript-chunk.active');
+    if (!el) return;
+    // Rect-based: offsetTop is offsetParent-relative (the box itself), so the
+    // old `offsetTop - box.offsetTop` double-subtracted and parked the active
+    // chunk below the fold.
+    var er = el.getBoundingClientRect(), br = box.getBoundingClientRect();
+    box.scrollTop += (er.top - br.top) - box.clientHeight / 3;
+  }
+
+  function setFollow(on, snap) {
+    followTranscript = on;
+    localStorage.setItem('rs-follow', on ? '1' : '0');
+    var btn = config.container && config.container.querySelector('#follow-btn');
+    if (btn) btn.classList.toggle('on', on);
+    if (on && snap !== false) scrollToActiveChunk();
+  }
   var lastFormattedTime = '';
   var lastPlayState = null;
 
@@ -629,7 +656,6 @@ var RepoStoryPlayer = (function () {
       lastActiveChapterId = ch.id;
       lastActiveChunkId = null;
       userScrolledChapters = false;
-      userScrolledTranscript = false;
       renderTranscriptChunks(ch.id + 1);
     }
 
@@ -643,11 +669,9 @@ var RepoStoryPlayer = (function () {
     if (!userScrolledChapters) {
       var activeLi = chapterLis[ch.id];
       var chList = dom.chapterList;
-      var liTop = activeLi.offsetTop - chList.offsetTop;
-      var liH = activeLi.offsetHeight;
-      var visible = liTop >= chList.scrollTop && (liTop + liH) <= (chList.scrollTop + chList.clientHeight);
-      if (!visible) {
-        chList.scrollTop = liTop - chList.clientHeight / 3;
+      var ar = activeLi.getBoundingClientRect(), lr = chList.getBoundingClientRect();
+      if (ar.top < lr.top || ar.bottom > lr.bottom) {
+        chList.scrollTop += (ar.top - lr.top) - chList.clientHeight / 3;
       }
     }
 
@@ -662,10 +686,7 @@ var RepoStoryPlayer = (function () {
         var el = dom.transcriptChunks.querySelector('#tc-' + cur.chapterIndex + '-' + chunkId);
         if (el) {
           el.classList.add('active');
-          if (!userScrolledTranscript) {
-            var elTop = el.offsetTop - dom.transcriptChunks.offsetTop;
-            dom.transcriptChunks.scrollTop = elTop - dom.transcriptChunks.clientHeight / 3;
-          }
+          if (followTranscript) scrollToActiveChunk();
         }
         lastActiveChunkId = chunkId;
       }
@@ -741,6 +762,7 @@ var RepoStoryPlayer = (function () {
 
   function prevChapter() {
     if (!currentBook) return;
+    setFollow(true, false);
     if (currentChapterIdx === 0) {
       try { audio.currentTime = 0; } catch (e) {}
       return;
@@ -751,6 +773,7 @@ var RepoStoryPlayer = (function () {
   function nextChapter() {
     if (!currentBook) return;
     if (currentChapterIdx >= currentBook.chapters.length - 1) return;
+    setFollow(true, false);
     loadChapter(currentChapterIdx + 1, 0, !audio.paused);
   }
 
@@ -819,6 +842,7 @@ var RepoStoryPlayer = (function () {
       '    <div class="transcript-panel" style="flex: 0 0 calc(50% - 5px)">' +
       '      <div class="transcript-panel-header">' +
       '        <h3>Transcript</h3>' +
+      '        <button class="follow-btn" id="follow-btn" title="Follow along with playback">&#8982; follow</button>' +
       '      </div>' +
       '      <div class="transcript-chunks" id="transcript-chunks"></div>' +
       '    </div>' +
@@ -854,12 +878,15 @@ var RepoStoryPlayer = (function () {
     config.container.querySelector('#btn-next').onclick = nextChapter;
     config.container.querySelector('#btn-fwd30').onclick = function () { skip(30); };
     config.container.querySelector('#speed-btn').onclick = cycleSpeed;
+    var followBtn = config.container.querySelector('#follow-btn');
+    followBtn.classList.toggle('on', followTranscript);
+    followBtn.onclick = function () { setFollow(!followTranscript); };
 
     config.container.querySelector('#chapter-list').addEventListener('wheel', function () {
       userScrolledChapters = true;
     });
     config.container.querySelector('#transcript-chunks').addEventListener('wheel', function () {
-      userScrolledTranscript = true;
+      if (followTranscript) setFollow(false);
     });
     config.container.querySelector('#chapter-list').addEventListener('pointerdown', function (e) {
       var rect = e.currentTarget.getBoundingClientRect();
@@ -867,14 +894,14 @@ var RepoStoryPlayer = (function () {
     });
     config.container.querySelector('#transcript-chunks').addEventListener('pointerdown', function (e) {
       var rect = e.currentTarget.getBoundingClientRect();
-      if (e.clientX > rect.right - 20) userScrolledTranscript = true;
+      if (e.clientX > rect.right - 20 && followTranscript) setFollow(false);
     });
 
     config.container.querySelector('#chapter-list').addEventListener('touchmove', function () {
       userScrolledChapters = true;
     });
     config.container.querySelector('#transcript-chunks').addEventListener('touchmove', function () {
-      userScrolledTranscript = true;
+      if (followTranscript) setFollow(false);
     });
 
     document.addEventListener('mousemove', handleScrubMove);

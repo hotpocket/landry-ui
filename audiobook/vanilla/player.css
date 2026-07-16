@@ -92,7 +92,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .transcript-panel { display: flex; flex-direction: column; min-width: 80px; overflow: hidden; }
 
 .transcript-panel-header { display: flex; align-items: center; padding: 0.5rem 0.75rem; flex-shrink: 0; }
-.transcript-panel-header h3 { font-size: 0.75rem; font-weight: 400; color: #555; text-transform: uppercase; letter-spacing: 0.1em; }
+.transcript-panel-header h3 { font-size: 0.75rem; font-weight: 400; color: #555; text-transform: uppercase; letter-spacing: 0.1em; flex: 1; }
+.follow-btn { background: none; border: 1px solid #333; color: #555; border-radius: 6px;
+  font-size: 0.7rem; line-height: 1; padding: 0.25rem 0.5rem; cursor: pointer;
+  text-transform: uppercase; letter-spacing: 0.05em; transition: color 0.15s, border-color 0.15s; }
+.follow-btn:hover { color: #999; }
+.follow-btn.on { color: #4a9eff; border-color: #4a9eff; }
 
 .transcript-chunks { overflow-y: auto; flex: 1; scroll-behavior: smooth; padding: 0 0.25rem; }
 .transcript-chunk { display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.5rem 0.75rem; border-radius: 6px; margin-bottom: 0.25rem; transition: background 0.15s; cursor: pointer; }

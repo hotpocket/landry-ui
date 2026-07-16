@@ -639,12 +639,14 @@ var RepoStoryPlayer = (function () {
     var bt = bookTime();
     var d = bookDuration();
 
-    var ft = formatTime(bt);
-    if (ft !== lastFormattedTime) {
-      lastFormattedTime = ft;
-      dom.currentTime.textContent = ft;
+    if (!trackDrag) {
+      var ft = formatTime(bt);
+      if (ft !== lastFormattedTime) {
+        lastFormattedTime = ft;
+        dom.currentTime.textContent = ft;
+      }
+      dom.progress.style.width = (d > 0 ? (bt / d * 100) : 0) + '%';
     }
-    dom.progress.style.width = (d > 0 ? (bt / d * 100) : 0) + '%';
 
     var paused = audio.paused;
     if (paused !== lastPlayState) {
@@ -791,10 +793,44 @@ var RepoStoryPlayer = (function () {
     loadChapter(currentChapterIdx + 1, 0, !audio.paused);
   }
 
-  function seekTo(e) {
-    var bar = dom.trackBar;
-    var pct = (e.clientX - bar.getBoundingClientRect().left) / bar.offsetWidth;
-    seekToBookTime(pct * (currentBook.duration || 0), !audio.paused);
+  // Track-bar drag-to-seek, mirroring the chapter scrubber: pointer capture
+  // so the gesture survives leaving the (thin) bar; audio follows LIVE while
+  // the target is inside the loaded chapter, and a release in another chapter
+  // loads it at that offset (loading per-move would thrash audio loads).
+  var trackDrag = null;
+
+  function trackPct(e) {
+    var rect = dom.trackBar.getBoundingClientRect();
+    return Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  }
+
+  function trackDragStart(e) {
+    if (!currentBook) return;
+    trackDrag = { wasPlaying: !audio.paused };
+    dom.trackBar.classList.add('dragging');
+    dom.trackBar.setPointerCapture(e.pointerId);
+    trackDragMove(e);
+    e.preventDefault();
+  }
+
+  function trackDragMove(e) {
+    if (!trackDrag) return;
+    var pct = trackPct(e);
+    var bt = pct * (currentBook.duration || 0);
+    dom.progress.style.width = (pct * 100) + '%';
+    dom.currentTime.textContent = formatTime(bt);
+    var idx = findChapterIdxAt(bt);
+    if (idx === currentChapterIdx) {
+      try { audio.currentTime = bt - currentBook.chapters[idx].start; } catch (err) {}
+    }
+  }
+
+  function trackDragEnd(e) {
+    if (!trackDrag) return;
+    var wasPlaying = trackDrag.wasPlaying;
+    trackDrag = null;
+    dom.trackBar.classList.remove('dragging');
+    seekToBookTime(trackPct(e) * (currentBook.duration || 0), wasPlaying);
   }
 
   function cycleSpeed() {
@@ -886,7 +922,14 @@ var RepoStoryPlayer = (function () {
     config.container.appendChild(audio);
 
     config.container.querySelector('#back-btn').onclick = showLibrary;
-    config.container.querySelector('#track-bar').onclick = seekTo;
+    var trackBarEl = config.container.querySelector('#track-bar');
+    trackBarEl.addEventListener('pointerdown', trackDragStart);
+    trackBarEl.addEventListener('pointermove', trackDragMove);
+    trackBarEl.addEventListener('pointerup', trackDragEnd);
+    trackBarEl.addEventListener('pointercancel', function () {
+      trackDrag = null;
+      trackBarEl.classList.remove('dragging');
+    });
     config.container.querySelector('#btn-back30').onclick = function () { skip(-30); };
     config.container.querySelector('#btn-prev').onclick = prevChapter;
     config.container.querySelector('#play-btn').onclick = togglePlay;

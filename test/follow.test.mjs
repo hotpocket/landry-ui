@@ -121,6 +121,39 @@ if (!rbtn) {
   check(restored, 'E3: toggling back restores the normal layout');
 }
 
+// F: track-bar drag-to-seek across chapters — press at ~25% (chapter 1),
+// drag to ~75% (chapter 2) drifting off the bar vertically, release.
+// Needs pointer capture; a bare click handler loses the gesture.
+{
+  const bb = await page.evaluate(() => {
+    const r = document.querySelector('#track-bar').getBoundingClientRect();
+    return { x: r.x, y: r.y, w: r.width, h: r.height };
+  });
+  const yMid = bb.y + bb.h / 2;
+  await page.mouse.move(bb.x + bb.w * 0.25, yMid);
+  await page.mouse.down();
+  // Mid-drag inside chapter 1 (45% = book 27s): audio must follow LIVE like
+  // the chapter scrubber, and the width transition must be off while dragging.
+  await page.mouse.move(bb.x + bb.w * 0.45, yMid + 40, { steps: 4 });
+  const mid = await page.evaluate(() => ({
+    t: document.querySelector('audio').currentTime,
+    dragging: document.querySelector('#track-bar').classList.contains('dragging'),
+    transition: getComputedStyle(document.querySelector('#progress')).transitionProperty,
+  }));
+  check(Math.abs(mid.t - 27) < 2, `F0: audio follows live within the loaded chapter (got ${mid.t.toFixed(1)}s)`);
+  check(mid.dragging && mid.transition === 'none', 'F0b: width transition disabled while dragging');
+  await page.mouse.move(bb.x + bb.w * 0.75, yMid + 40, { steps: 8 });  // drift below the bar
+  const midWidth = await page.evaluate(() =>
+    parseFloat(document.querySelector('#progress').style.width) || 0);
+  await page.mouse.up();
+  const landed = await page.waitForFunction(() => {
+    const a = document.querySelector('audio');
+    return /chapter_0002\.m4a$/.test(a.src) && a.readyState >= 1 && Math.abs(a.currentTime - 15) < 3;
+  }, { timeout: 4000 }).then(() => true, () => false);
+  check(midWidth > 60 && midWidth < 90, 'F1: progress bar tracks the drag live');
+  check(landed, 'F2: releasing the drag seeks across chapters (75% → ch2 @ ~15s)');
+}
+
 await browser.close();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

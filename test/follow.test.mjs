@@ -251,6 +251,39 @@ if (!rbtn) {
   check(moved < 1000 && !shown(during), `J: auto-scroll does not wake the scrollbar (scrollTop ${moved}, ${during})`);
 }
 
+// K: A−/A+ text-size stepper — 3 steps, clamped at the ends, persisted
+{
+  const chunkPx = () => page.evaluate(() =>
+    parseFloat(getComputedStyle(document.querySelector('.transcript-chunk .chunk-text')).fontSize));
+  const btns = await page.evaluate(() =>
+    ({ dec: !!document.querySelector('#ts-dec'), inc: !!document.querySelector('#ts-inc') }));
+  if (!btns.dec || !btns.inc) {
+    bad('K: #ts-dec/#ts-inc missing');
+  } else {
+    // 5 steps: xs, small, normal (default), large, xl
+    const normal = await chunkPx();
+    await page.click('#ts-inc', { timeout: 1500 }).catch(() => {});
+    const larger = await chunkPx();
+    await page.click('#ts-inc', { timeout: 1500 }).catch(() => {});
+    const largest = await chunkPx();
+    // At max the button disables (clamp); a synthetic click must change nothing.
+    const maxState = await page.evaluate(() => {
+      document.querySelector('#ts-inc').click();
+      return document.querySelector('#ts-inc').disabled;
+    });
+    const clamped = await chunkPx();
+    for (let i = 0; i < 4; i++) await page.click('#ts-dec', { timeout: 1500 }).catch(() => {});
+    const smallest = await chunkPx();
+    const minState = await page.evaluate(() => document.querySelector('#ts-dec').disabled);
+    check(larger > normal && largest > larger, `K1: two A+ steps up (${normal} → ${larger} → ${largest}px)`);
+    check(maxState && clamped === largest, `K2: disabled + clamped at max (${clamped}px)`);
+    check(smallest < normal && minState, `K3: two A− steps below normal, disabled at min (${smallest}px)`);
+    const stored = await page.evaluate(() => localStorage.getItem('rs-textsize'));
+    check(stored === '0', `K4: persisted (rs-textsize=${stored})`);
+    await page.click('#ts-inc', { timeout: 1500 }).catch(() => {}); await page.click('#ts-inc', { timeout: 1500 }).catch(() => {});  // back to normal
+  }
+}
+
 await browser.close();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -579,6 +579,32 @@ var RepoStoryPlayer = (function () {
     if (on && snap !== false) scrollToActiveChunk();
   }
 
+  // Transcript text size: A−/A+ stepper, 5 steps, persisted (rs-textsize).
+  var TEXT_SIZE_CLASSES = ['ts-xs', 'ts-small', '', 'ts-large', 'ts-xl'];
+  var TEXT_SIZE_DEFAULT = 2;
+  var textSize = parseInt(localStorage.getItem('rs-textsize') || String(TEXT_SIZE_DEFAULT), 10);
+  if (isNaN(textSize) || textSize < 0 || textSize >= TEXT_SIZE_CLASSES.length) textSize = TEXT_SIZE_DEFAULT;
+
+  function applyTextSize() {
+    var box = config.container.querySelector('#transcript-chunks');
+    if (!box) return;
+    box.classList.remove('ts-xs', 'ts-small', 'ts-large', 'ts-xl');
+    if (TEXT_SIZE_CLASSES[textSize]) box.classList.add(TEXT_SIZE_CLASSES[textSize]);
+    var dec = config.container.querySelector('#ts-dec');
+    var inc = config.container.querySelector('#ts-inc');
+    if (dec) dec.disabled = textSize === 0;
+    if (inc) inc.disabled = textSize === TEXT_SIZE_CLASSES.length - 1;
+  }
+
+  function stepTextSize(delta) {
+    var next = Math.max(0, Math.min(TEXT_SIZE_CLASSES.length - 1, textSize + delta));
+    if (next === textSize) return;
+    textSize = next;
+    localStorage.setItem('rs-textsize', String(textSize));
+    applyTextSize();
+    if (followTranscript) scrollToActiveChunk();  // reflow moved the text
+  }
+
   // Reading mode: transcript-only view — chapter panel and header chrome
   // hidden, controls compacted (see .reading-mode rules in player.css).
   var readingMode = localStorage.getItem('rs-reading') === '1';
@@ -904,6 +930,8 @@ var RepoStoryPlayer = (function () {
       '      <div class="transcript-panel-header">' +
       '        <h3>Transcript</h3>' +
       '        <button class="mini-play-btn" id="mini-play-btn" title="Play/pause">&#9654;</button>' +
+      '        <button class="ts-btn ts-dec" id="ts-dec" title="Smaller text">A&#8722;</button>' +
+      '        <button class="ts-btn ts-inc" id="ts-inc" title="Larger text">A+</button>' +
       '        <button class="follow-btn" id="follow-btn" title="Follow along with playback">&#8982; follow</button>' +
       '        <button class="reading-btn" id="reading-btn" title="Reading mode — transcript only">&#9707; read</button>' +
       '      </div>' +
@@ -953,6 +981,9 @@ var RepoStoryPlayer = (function () {
     followBtn.onclick = function () { setFollow(!followTranscript); };
     config.container.querySelector('#reading-btn').onclick = function () { setReadingMode(!readingMode); };
     config.container.querySelector('#mini-play-btn').onclick = togglePlay;
+    config.container.querySelector('#ts-dec').onclick = function () { stepTextSize(-1); };
+    config.container.querySelector('#ts-inc').onclick = function () { stepTextSize(1); };
+    applyTextSize();
     if (readingMode) setReadingMode(true);
 
     // Scrollbars are hidden at rest; show while scrolling, hide after idle.

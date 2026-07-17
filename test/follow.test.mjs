@@ -184,6 +184,21 @@ if (!rbtn) {
   check(onHover !== null && onHover > 0.9, `G2: thumb shown on hover (scale ${onHover})`);
 }
 
+// H: narrow layouts (zoom / small screens) must not clip the header buttons
+{
+  await page.setViewportSize({ width: 420, height: 700 });
+  await waitTicks();
+  const fits = await page.evaluate(() => {
+    const pr = document.querySelector('.transcript-panel').getBoundingClientRect();
+    return ['#follow-btn', '#reading-btn'].every((sel) => {
+      const r = document.querySelector(sel).getBoundingClientRect();
+      return r.width > 0 && r.right <= pr.right + 1 && r.left >= pr.left - 1;
+    });
+  });
+  check(fits, 'H: follow/read buttons stay inside the panel at narrow width');
+  await page.setViewportSize({ width: 900, height: 600 });
+}
+
 await browser.close();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

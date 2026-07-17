@@ -284,6 +284,28 @@ if (!rbtn) {
   }
 }
 
+// L: wide layouts — 90vw canvas + user-steppable text column width
+{
+  await page.setViewportSize({ width: 1800, height: 800 });
+  await waitTicks();
+  const viewW = await page.evaluate(() => document.querySelector('#player-view').getBoundingClientRect().width);
+  check(viewW > 1500, `L1: player uses ~90vw on wide screens (${Math.round(viewW)}px of 1800)`);
+  const chunkW = await page.evaluate(() => document.querySelector('.transcript-chunk').getBoundingClientRect().width);
+  const paneW = await page.evaluate(() => document.querySelector('#transcript-chunks').getBoundingClientRect().width);
+  check(chunkW > paneW - 40, `L2: transcript text fills its pane (${Math.round(chunkW)} of ${Math.round(paneW)}px)`);
+  await page.setViewportSize({ width: 900, height: 600 });
+}
+
+// M: text-size choice survives a reload
+{
+  await page.evaluate(() => { localStorage.setItem('rs-textsize', '4'); });
+  await page.reload();
+  await page.waitForSelector('.transcript-chunk', { timeout: 5000 });
+  const applied = await page.evaluate(() =>
+    document.querySelector('#transcript-chunks').classList.contains('ts-xl'));
+  check(applied, 'M: text size persists through reload');
+}
+
 await browser.close();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

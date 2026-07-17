@@ -605,6 +605,7 @@ var RepoStoryPlayer = (function () {
     if (followTranscript) scrollToActiveChunk();  // reflow moved the text
   }
 
+
   // Reading mode: transcript-only view — chapter panel and header chrome
   // hidden, controls compacted (see .reading-mode rules in player.css).
   var readingMode = localStorage.getItem('rs-reading') === '1';
@@ -991,7 +992,12 @@ var RepoStoryPlayer = (function () {
       var el = config.container.querySelector(sel);
       var timer = null;
       el.addEventListener('scroll', function () {
-        if (el._sbQuietUntil && Date.now() < el._sbQuietUntil) return;
+        if (el._sbQuietUntil && Date.now() < el._sbQuietUntil) {
+          // Still the programmatic smooth-scroll: slide the window so long
+          // animations stay quiet end to end.
+          el._sbQuietUntil = Date.now() + 200;
+          return;
+        }
         el.classList.add('scrolling');
         if (timer) clearTimeout(timer);
         timer = setTimeout(function () { el.classList.remove('scrolling'); }, 800);

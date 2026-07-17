@@ -260,27 +260,29 @@ if (!rbtn) {
   if (!btns.dec || !btns.inc) {
     bad('K: #ts-dec/#ts-inc missing');
   } else {
-    // 5 steps: xs, small, normal (default), large, xl
+    // Computed 1.25^n scale, n = -2..+3, default 0
     const normal = await chunkPx();
     await page.click('#ts-inc', { timeout: 1500 }).catch(() => {});
     const larger = await chunkPx();
+    check(Math.abs(larger / normal - 1.25) < 0.02, `K1: A+ = one 1.25x step (${normal} → ${larger}px)`);
+    await page.click('#ts-inc', { timeout: 1500 }).catch(() => {});
     await page.click('#ts-inc', { timeout: 1500 }).catch(() => {});
     const largest = await chunkPx();
-    // At max the button disables (clamp); a synthetic click must change nothing.
     const maxState = await page.evaluate(() => {
       document.querySelector('#ts-inc').click();
       return document.querySelector('#ts-inc').disabled;
     });
     const clamped = await chunkPx();
-    for (let i = 0; i < 4; i++) await page.click('#ts-dec', { timeout: 1500 }).catch(() => {});
+    check(Math.abs(largest / normal - 1.953) < 0.03 && maxState && clamped === largest,
+      `K2: max = 1.25^3, disabled + clamped (${largest}px)`);
+    for (let i = 0; i < 6; i++) await page.click('#ts-dec', { timeout: 1500 }).catch(() => {});
     const smallest = await chunkPx();
     const minState = await page.evaluate(() => document.querySelector('#ts-dec').disabled);
-    check(larger > normal && largest > larger, `K1: two A+ steps up (${normal} → ${larger} → ${largest}px)`);
-    check(maxState && clamped === largest, `K2: disabled + clamped at max (${clamped}px)`);
-    check(smallest < normal && minState, `K3: two A− steps below normal, disabled at min (${smallest}px)`);
-    const stored = await page.evaluate(() => localStorage.getItem('rs-textsize'));
-    check(stored === '0', `K4: persisted (rs-textsize=${stored})`);
-    await page.click('#ts-inc', { timeout: 1500 }).catch(() => {}); await page.click('#ts-inc', { timeout: 1500 }).catch(() => {});  // back to normal
+    check(Math.abs(smallest / normal - 0.64) < 0.02 && minState,
+      `K3: min = 1.25^-2, disabled at min (${smallest}px)`);
+    const stored = await page.evaluate(() => localStorage.getItem('rs-textsize-n'));
+    check(stored === '-2', `K4: persisted as exponent (rs-textsize-n=${stored})`);
+    await page.click('#ts-inc', { timeout: 1500 }).catch(() => {}); await page.click('#ts-inc', { timeout: 1500 }).catch(() => {});  // back to n=0
   }
 }
 
@@ -306,12 +308,12 @@ if (!rbtn) {
 
 // M: text-size choice survives a reload
 {
-  await page.evaluate(() => { localStorage.setItem('rs-textsize', '4'); });
+  await page.evaluate(() => { localStorage.setItem('rs-textsize-n', '3'); });
   await page.reload();
   await page.waitForSelector('.transcript-chunk', { timeout: 5000 });
-  const applied = await page.evaluate(() =>
-    document.querySelector('#transcript-chunks').classList.contains('ts-xl'));
-  check(applied, 'M: text size persists through reload');
+  const scale = await page.evaluate(() => parseFloat(
+    getComputedStyle(document.querySelector('#transcript-chunks')).getPropertyValue('--ts-scale')));
+  check(Math.abs(scale - 1.953) < 0.01, `M: text size persists through reload (--ts-scale=${scale})`);
 }
 
 await browser.close();

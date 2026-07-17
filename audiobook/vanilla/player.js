@@ -579,28 +579,27 @@ var RepoStoryPlayer = (function () {
     if (on && snap !== false) scrollToActiveChunk();
   }
 
-  // Transcript text size: A−/A+ stepper, 5 steps, persisted (rs-textsize).
-  var TEXT_SIZE_CLASSES = ['ts-xs', 'ts-small', '', 'ts-large', 'ts-xl'];
-  var TEXT_SIZE_DEFAULT = 2;
-  var textSize = parseInt(localStorage.getItem('rs-textsize') || String(TEXT_SIZE_DEFAULT), 10);
-  if (isNaN(textSize) || textSize < 0 || textSize >= TEXT_SIZE_CLASSES.length) textSize = TEXT_SIZE_DEFAULT;
+  // Transcript text size: A−/A+ stepper setting --ts-scale = RATIO^n,
+  // n in [MIN, MAX], persisted as the exponent (rs-textsize-n).
+  var TS_RATIO = 1.25, TS_MIN = -2, TS_MAX = 3;
+  var textSize = parseInt(localStorage.getItem('rs-textsize-n') || '0', 10);
+  if (isNaN(textSize) || textSize < TS_MIN || textSize > TS_MAX) textSize = 0;
 
   function applyTextSize() {
     var box = config.container.querySelector('#transcript-chunks');
     if (!box) return;
-    box.classList.remove('ts-xs', 'ts-small', 'ts-large', 'ts-xl');
-    if (TEXT_SIZE_CLASSES[textSize]) box.classList.add(TEXT_SIZE_CLASSES[textSize]);
+    box.style.setProperty('--ts-scale', Math.pow(TS_RATIO, textSize).toFixed(4));
     var dec = config.container.querySelector('#ts-dec');
     var inc = config.container.querySelector('#ts-inc');
-    if (dec) dec.disabled = textSize === 0;
-    if (inc) inc.disabled = textSize === TEXT_SIZE_CLASSES.length - 1;
+    if (dec) dec.disabled = textSize === TS_MIN;
+    if (inc) inc.disabled = textSize === TS_MAX;
   }
 
   function stepTextSize(delta) {
-    var next = Math.max(0, Math.min(TEXT_SIZE_CLASSES.length - 1, textSize + delta));
+    var next = Math.max(TS_MIN, Math.min(TS_MAX, textSize + delta));
     if (next === textSize) return;
     textSize = next;
-    localStorage.setItem('rs-textsize', String(textSize));
+    localStorage.setItem('rs-textsize-n', String(textSize));
     applyTextSize();
     if (followTranscript) scrollToActiveChunk();  // reflow moved the text
   }

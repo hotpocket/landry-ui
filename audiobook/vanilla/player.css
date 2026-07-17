@@ -135,12 +135,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .player-view.reading-mode .transcript-chunk { font-size: calc(1rem * var(--ts-scale, 1)); }
 .player-view.reading-mode .transcript-chunk .chunk-text { line-height: 1.65; }
 
-/* Transcript text size: A−/A+ stepper feeding --ts-scale (composes with the
-   reading-mode base bump). ~1.18x geometric ladder around the 1x default. */
-.transcript-chunks.ts-xs    { --ts-scale: 0.72; }
-.transcript-chunks.ts-small { --ts-scale: 0.85; }
-.transcript-chunks.ts-large { --ts-scale: 1.2; }
-.transcript-chunks.ts-xl    { --ts-scale: 1.44; }
+/* Transcript text size: A−/A+ stepper sets --ts-scale inline on
+   #transcript-chunks (1.25^n, n = -2..+3); composes with the reading-mode
+   base bump via the calc() font-size rules. */
 .ts-btn { background: none; border: 1px solid #333; color: #555; border-radius: 6px;
   line-height: 1; padding: 0.25rem 0.4rem; cursor: pointer;
   transition: color 0.15s, border-color 0.15s; white-space: nowrap; }

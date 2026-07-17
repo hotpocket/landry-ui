@@ -127,7 +127,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .player-view.reading-mode .chapter-panel,
 .player-view.reading-mode .panel-divider,
 .player-view.reading-mode .player-controls { display: none; }
-.player-view.reading-mode { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+/* Full-bleed: reading mode is "give me the text" — drop the 90vw margins,
+   keep a thin fixed gutter so text doesn't touch the screen edge. */
+.player-view.reading-mode { max-width: none; padding: 0.5rem 1rem; }
 .player-view.reading-mode .content-area { margin-bottom: 0; }
 .player-view.reading-mode .transcript-panel { flex: 1 1 auto !important; }
 .player-view.reading-mode .transcript-chunk { font-size: calc(1rem * var(--ts-scale, 1)); }

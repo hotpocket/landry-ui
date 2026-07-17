@@ -293,6 +293,14 @@ if (!rbtn) {
   const chunkW = await page.evaluate(() => document.querySelector('.transcript-chunk').getBoundingClientRect().width);
   const paneW = await page.evaluate(() => document.querySelector('#transcript-chunks').getBoundingClientRect().width);
   check(chunkW > paneW - 40, `L2: transcript text fills its pane (${Math.round(chunkW)} of ${Math.round(paneW)}px)`);
+
+  // L3: reading mode goes full-bleed — ~100vw minus a thin fixed gutter
+  await page.click('#reading-btn');
+  await waitTicks();
+  const readW = await page.evaluate(() => document.querySelector('.transcript-chunk').getBoundingClientRect().width);
+  check(readW > 1800 - 60, `L3: reading mode uses the full screen width (${Math.round(readW)}px of 1800)`);
+  await page.click('#reading-btn');
+  await waitTicks();
   await page.setViewportSize({ width: 900, height: 600 });
 }
 

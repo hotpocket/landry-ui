@@ -33,20 +33,34 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .now-playing .book-title { font-size: 1.3rem; font-weight: 400; margin-bottom: 0.25rem; }
 .now-playing .chapter-title { font-size: 0.9rem; color: #4a9eff; }
 
-/* Scrollbar theming */
+/* Scrollbar theming: invisible at rest; the .scrolling class (added by the
+   player on scroll, removed after idle) shows it. Colors route through
+   registered custom properties so the show/hide is a real fade — scrollbar
+   pseudo-elements can't transition, but registered properties can. */
+@property --sb-thumb { syntax: '<color>'; inherits: false; initial-value: rgba(74, 158, 255, 0); }
+@property --sb-track { syntax: '<color>'; inherits: false; initial-value: rgba(26, 26, 26, 0); }
 .chapter-list,
 .transcript-chunks {
+  --sb-thumb: rgba(74, 158, 255, 0);
+  --sb-track: rgba(26, 26, 26, 0);
+  transition: --sb-thumb 0.5s, --sb-track 0.5s;
   scrollbar-width: thin;
-  scrollbar-color: #4a9eff #1a1a1a;
+  scrollbar-color: var(--sb-thumb) var(--sb-track);
+}
+.chapter-list.scrolling,
+.transcript-chunks.scrolling {
+  --sb-thumb: #4a9eff;
+  --sb-track: #1a1a1a;
+  transition: --sb-thumb 0.15s, --sb-track 0.15s;
 }
 .chapter-list::-webkit-scrollbar,
 .transcript-chunks::-webkit-scrollbar { width: 6px; }
 .chapter-list::-webkit-scrollbar-track,
-.transcript-chunks::-webkit-scrollbar-track { background: #1a1a1a; border-radius: 3px; }
+.transcript-chunks::-webkit-scrollbar-track { background: var(--sb-track); border-radius: 3px; }
 .chapter-list::-webkit-scrollbar-thumb,
-.transcript-chunks::-webkit-scrollbar-thumb { background: #4a9eff; border-radius: 3px; }
-.chapter-list::-webkit-scrollbar-thumb:hover,
-.transcript-chunks::-webkit-scrollbar-thumb:hover { background: #6bb3ff; }
+.transcript-chunks::-webkit-scrollbar-thumb { background: var(--sb-thumb); border-radius: 3px; }
+.chapter-list.scrolling::-webkit-scrollbar-thumb:hover,
+.transcript-chunks.scrolling::-webkit-scrollbar-thumb:hover { background: #6bb3ff; }
 
 /* Content area: chapters + transcript side by side */
 .content-area { display: flex; flex: 1; min-height: 0; margin-bottom: 1rem; background: #0f0f0f; border-radius: 8px; overflow: hidden; }

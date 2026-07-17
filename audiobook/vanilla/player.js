@@ -551,6 +551,13 @@ var RepoStoryPlayer = (function () {
   // explicit navigation (chunk/chapter click, seek, skip, prev/next) re-arms.
   var followTranscript = localStorage.getItem('rs-follow') !== '0';
 
+  // Programmatic scrolls (follow, chapter auto-scroll) fire the same scroll
+  // events as user scrolling; mark them so the auto-hiding scrollbar only
+  // wakes for real user scrolls. The window covers the smooth-scroll animation.
+  function markProgrammaticScroll(el) {
+    el._sbQuietUntil = Date.now() + 700;
+  }
+
   function scrollToActiveChunk() {
     var box = dom.transcriptChunks;
     if (!box) return;
@@ -560,6 +567,7 @@ var RepoStoryPlayer = (function () {
     // old `offsetTop - box.offsetTop` double-subtracted and parked the active
     // chunk below the fold.
     var er = el.getBoundingClientRect(), br = box.getBoundingClientRect();
+    markProgrammaticScroll(box);
     box.scrollTop += (er.top - br.top) - box.clientHeight / 3;
   }
 
@@ -688,6 +696,7 @@ var RepoStoryPlayer = (function () {
       var chList = dom.chapterList;
       var ar = activeLi.getBoundingClientRect(), lr = chList.getBoundingClientRect();
       if (ar.top < lr.top || ar.bottom > lr.bottom) {
+        markProgrammaticScroll(chList);
         chList.scrollTop += (ar.top - lr.top) - chList.clientHeight / 3;
       }
     }
@@ -945,6 +954,18 @@ var RepoStoryPlayer = (function () {
     config.container.querySelector('#reading-btn').onclick = function () { setReadingMode(!readingMode); };
     config.container.querySelector('#mini-play-btn').onclick = togglePlay;
     if (readingMode) setReadingMode(true);
+
+    // Scrollbars are hidden at rest; show while scrolling, hide after idle.
+    ['#chapter-list', '#transcript-chunks'].forEach(function (sel) {
+      var el = config.container.querySelector(sel);
+      var timer = null;
+      el.addEventListener('scroll', function () {
+        if (el._sbQuietUntil && Date.now() < el._sbQuietUntil) return;
+        el.classList.add('scrolling');
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(function () { el.classList.remove('scrolling'); }, 800);
+      });
+    });
 
     config.container.querySelector('#chapter-list').addEventListener('wheel', function () {
       userScrolledChapters = true;

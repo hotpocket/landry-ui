@@ -199,6 +199,58 @@ if (!rbtn) {
   await page.setViewportSize({ width: 900, height: 600 });
 }
 
+// I: scrollbar hidden at rest, visible while scrolling, hidden again after idle
+{
+  const sbColor = () => page.evaluate(() =>
+    getComputedStyle(document.querySelector('#transcript-chunks')).scrollbarColor);
+  const alphasOf = (c) => (c.match(/rgba?\([^)]+\)/g) || []).map((s) => {
+    const p = s.match(/[\d.]+/g).map(Number);
+    return s.startsWith('rgba') ? p[3] : 1;
+  });
+  const hidden = (c) => /transparent/.test(c) || alphasOf(c).every((a) => a <= 0.05);
+  await new Promise((r) => setTimeout(r, 900));  // let any earlier scroll go idle
+  const atRest = await sbColor();
+  await page.hover('#transcript-chunks');
+  await page.mouse.wheel(0, 200);
+  await new Promise((r) => setTimeout(r, 100));
+  const whileScrolling = await sbColor();
+  await new Promise((r) => setTimeout(r, 1200));
+  const afterIdle = await sbColor();
+  check(hidden(atRest), `I1: scrollbar hidden at rest (${atRest})`);
+  check(!hidden(whileScrolling), `I2: scrollbar visible while scrolling (${whileScrolling})`);
+  check(hidden(afterIdle), `I3: scrollbar hides again after idle (${afterIdle})`);
+
+  // I4: it fades rather than snapping — mid-fade (idle 800ms + 500ms fade)
+  // the thumb alpha is strictly between hidden and shown.
+  await page.mouse.wheel(0, -100);  // up: pane sits at the bottom after I2
+  await new Promise((r) => setTimeout(r, 1000));
+  const midFade = await sbColor();
+  check(alphasOf(midFade).some((a) => a > 0.05 && a < 0.95),
+    `I4: scrollbar fades out gradually (mid-fade ${midFade})`);
+}
+
+// J: programmatic follow-scrolls must NOT wake the scrollbar
+{
+  const sbColor = () => page.evaluate(() =>
+    getComputedStyle(document.querySelector('#transcript-chunks')).scrollbarColor);
+  const shown = (c) => ((c.match(/rgba?\([^)]+\)/g) || []).some((s) => {
+    const p = s.match(/[\d.]+/g).map(Number);
+    return (s.startsWith('rgba') ? p[3] : 1) > 0.05;
+  }));
+  await page.click('#ch-0');  // back to chapter 1 (40 chunks — overflows) + re-arms follow
+  await page.waitForFunction(() => {
+    const a = document.querySelector('audio');
+    return /chapter_0001\.m4a$/.test(a.src) && a.readyState >= 1;
+  }, { timeout: 4000 });
+  await page.evaluate(() => { const a = document.querySelector('audio'); a.pause(); a.currentTime = 24.5; });
+  await new Promise((r) => setTimeout(r, 1500));  // let that follow-scroll settle + fade
+  await page.evaluate(() => { document.querySelector('audio').currentTime = 1.0; });  // far jump → smooth auto-scroll
+  await new Promise((r) => setTimeout(r, 250));  // mid smooth-scroll
+  const during = await sbColor();
+  const moved = await page.evaluate(() => document.querySelector('#transcript-chunks').scrollTop);
+  check(moved < 1000 && !shown(during), `J: auto-scroll does not wake the scrollbar (scrollTop ${moved}, ${during})`);
+}
+
 await browser.close();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

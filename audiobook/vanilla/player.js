@@ -652,6 +652,7 @@ var RepoStoryPlayer = (function () {
     if (paused !== lastPlayState) {
       lastPlayState = paused;
       dom.playBtn.innerHTML = paused ? '&#9654;' : '&#9646;&#9646;';
+      if (dom.miniPlayBtn) dom.miniPlayBtn.innerHTML = paused ? '&#9654;' : '&#9646;&#9646;';
       dom.totalTime.textContent = formatTime(d);
     }
 
@@ -733,6 +734,7 @@ var RepoStoryPlayer = (function () {
     dom.chapterList = container.querySelector('#chapter-list');
     dom.trackBar = container.querySelector('#track-bar');
     dom.transcriptChunks = container.querySelector('#transcript-chunks');
+    dom.miniPlayBtn = container.querySelector('#mini-play-btn');
 
     dom.bookTitle.textContent = currentBook.title;
 
@@ -892,6 +894,7 @@ var RepoStoryPlayer = (function () {
       '    <div class="transcript-panel" style="flex: 0 0 calc(50% - 5px)">' +
       '      <div class="transcript-panel-header">' +
       '        <h3>Transcript</h3>' +
+      '        <button class="mini-play-btn" id="mini-play-btn" title="Play/pause">&#9654;</button>' +
       '        <button class="follow-btn" id="follow-btn" title="Follow along with playback">&#8982; follow</button>' +
       '        <button class="reading-btn" id="reading-btn" title="Reading mode — transcript only">&#9707; read</button>' +
       '      </div>' +
@@ -940,6 +943,7 @@ var RepoStoryPlayer = (function () {
     followBtn.classList.toggle('on', followTranscript);
     followBtn.onclick = function () { setFollow(!followTranscript); };
     config.container.querySelector('#reading-btn').onclick = function () { setReadingMode(!readingMode); };
+    config.container.querySelector('#mini-play-btn').onclick = togglePlay;
     if (readingMode) setReadingMode(true);
 
     config.container.querySelector('#chapter-list').addEventListener('wheel', function () {

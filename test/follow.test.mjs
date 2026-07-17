@@ -113,11 +113,19 @@ if (!rbtn) {
   }));
   check(state.mode && state.chapterW === 0 && state.nowPlayingW === 0, 'E1: reading mode hides chapters + header chrome');
   check(state.trW > trWidthBefore * 1.5, 'E2: transcript goes full-width');
+  const controls = await page.evaluate(() => ({
+    barH: document.querySelector('.player-controls').getBoundingClientRect().height,
+    miniVisible: document.querySelector('#mini-play-btn')?.getBoundingClientRect().width > 0,
+  }));
+  check(controls.barH === 0, 'E4: reading mode removes the bottom control bar');
+  check(controls.miniVisible === true, 'E5: mini play/pause appears in the transcript header');
   await page.click('#reading-btn');
   await waitTicks();
   const restored = await page.evaluate(() =>
     !document.querySelector('#player-view').classList.contains('reading-mode') &&
-    document.querySelector('.chapter-panel').getBoundingClientRect().width > 0);
+    document.querySelector('.chapter-panel').getBoundingClientRect().width > 0 &&
+    document.querySelector('.player-controls').getBoundingClientRect().height > 0 &&
+    !(document.querySelector('#mini-play-btn')?.getBoundingClientRect().width > 0));
   check(restored, 'E3: toggling back restores the normal layout');
 }
 

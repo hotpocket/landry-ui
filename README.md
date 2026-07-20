@@ -38,7 +38,7 @@ Fetched files are dependencies, not source. Re-run `luinst` to get the latest ve
 
 | Variable | Default | Description |
 |---|---|---|
-| `LANDRY_UI_REPO` | `git@github.com:hotpocket/landry-ui.git` | Override repo URL (HTTPS, other host, etc.) |
+| `LANDRY_UI_REPO` | `https://github.com/hotpocket/landry-ui.git` | Override repo URL (`git@github.com:hotpocket/landry-ui.git` for SSH) |
 | `LANDRY_UI_BRANCH` | `main` | Fetch from a different branch or tag |
 
 ---

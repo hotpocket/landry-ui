@@ -13,11 +13,11 @@
 #   $2 — local destination directory (created if needed)
 #
 # Environment:
-#   LANDRY_UI_REPO   — override repo URL (default: git@github.com:hotpocket/landry-ui.git)
+#   LANDRY_UI_REPO   — override repo URL (default: https://github.com/hotpocket/landry-ui.git; use git@github.com:hotpocket/landry-ui.git for SSH)
 #   LANDRY_UI_BRANCH — override branch (default: main)
 set -euo pipefail
 
-REPO="${LANDRY_UI_REPO:-git@github.com:hotpocket/landry-ui.git}"
+REPO="${LANDRY_UI_REPO:-https://github.com/hotpocket/landry-ui.git}"
 BRANCH="${LANDRY_UI_BRANCH:-main}"
 
 COMPONENT="${1:?Usage: luinst <component-path> <dest-dir>}"

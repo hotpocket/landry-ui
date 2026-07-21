@@ -2,12 +2,20 @@
  * player.js — Repo Story audiobook player component (per-chapter model).
  *
  * Each book contains a list of chapter objects with per-chapter audio URLs:
- *   { id, n, title, filename, start, end, duration, size }
+ *   { id, n, title, filename, start, end, duration, size,
+ *     summary?: { filename, duration, size } }
  *
  * `start`/`end` are book-relative (sum of prior chapter durations); the actual
  * <audio> element only loads one chapter at a time, so audio.currentTime is
  * chapter-local. Use bookTime() / bookDuration() for book-relative reads,
  * and seekToBookTime() / loadChapter() for navigation.
+ *
+ * Summary mode (#mode-full/#mode-summary): chapters may carry a condensed
+ * summary track. The mode swaps the audio source, the transcript chunks
+ * (transcripts.json chapter.summary_chunks), and the whole time model onto
+ * the summary clock — book-relative summary starts are computed client-side
+ * in openBook, so seeking/track-bar/progress all work per mode. Positions
+ * don't map between the two clocks, so a mode switch restarts the chapter.
  *
  * Usage:
  *   RepoStoryPlayer.init({
@@ -31,6 +39,29 @@ var RepoStoryPlayer = (function () {
   var pendingPlayAfterLoad = false;
   var loadGen = 0;  // monotonically-increasing id; lets us cancel stale loadedmetadata callbacks
 
+  // Summary mode: swaps audio + transcript + time model onto the condensed
+  // per-chapter summary tracks. Effective only for books that carry them.
+  var summaryMode = localStorage.getItem('rs-summary') === '1';
+  var summaryStarts = null;   // per-chapter book-relative starts on the summary clock
+  var summaryTotal = 0;
+
+  function bookHasSummaries(book) {
+    return !!(book && book.chapters && book.chapters.some(function (c) { return c.summary; }));
+  }
+
+  function chStart(ch) {
+    return (summaryMode && summaryStarts) ? summaryStarts[ch.id] : ch.start;
+  }
+
+  function chDur(ch) {
+    if (summaryMode && ch.summary) return ch.summary.duration;
+    return ch.duration || (ch.end - ch.start);
+  }
+
+  function chunksFor(ct) {
+    return summaryMode ? (ct.summary_chunks || []) : ct.chunks;
+  }
+
   // Cached DOM references (set once in openBook)
   var dom = {};
 
@@ -44,7 +75,8 @@ var RepoStoryPlayer = (function () {
   }
 
   function audioUrlFor(chapter) {
-    return (config.audioBaseUrl || 'audio/') + chapter.filename;
+    var file = (summaryMode && chapter.summary) ? chapter.summary.filename : chapter.filename;
+    return (config.audioBaseUrl || 'audio/') + file;
   }
 
   // --- URL routing ---
@@ -82,11 +114,13 @@ var RepoStoryPlayer = (function () {
     if (!currentBook) return 0;
     var ch = currentBook.chapters[currentChapterIdx];
     if (!ch) return 0;
-    return ch.start + (audio.currentTime || 0);
+    return chStart(ch) + (audio.currentTime || 0);
   }
 
   function bookDuration() {
-    return currentBook ? currentBook.duration : 0;
+    if (!currentBook) return 0;
+    if (summaryMode && summaryStarts) return summaryTotal;
+    return currentBook.duration;
   }
 
   function getProgress(bookIdx) {
@@ -113,7 +147,8 @@ var RepoStoryPlayer = (function () {
       progress: p,
       chapterIdx: currentChapterIdx,
       chapterN: ch ? ch.n : null,
-      timeInChapter: audio.currentTime || 0
+      timeInChapter: audio.currentTime || 0,
+      summary: summaryMode
     }));
     localStorage.setItem('rs-last-book', String(currentBookIdx));
   }
@@ -123,7 +158,7 @@ var RepoStoryPlayer = (function () {
     var lo = 0, hi = chapters.length - 1;
     while (lo < hi) {
       var mid = (lo + hi + 1) >> 1;
-      if (chapters[mid].start <= bt) lo = mid;
+      if (chStart(chapters[mid]) <= bt) lo = mid;
       else hi = mid - 1;
     }
     return lo;
@@ -159,10 +194,10 @@ var RepoStoryPlayer = (function () {
   function seekToBookTime(bt, autoplay) {
     if (!currentBook) return;
     setFollow(true, false);  // explicit navigation re-arms following
-    bt = Math.max(0, Math.min(bt, currentBook.duration));
+    bt = Math.max(0, Math.min(bt, bookDuration()));
     var idx = findChapterIdxAt(bt);
     var ch = currentBook.chapters[idx];
-    var timeInChapter = bt - ch.start;
+    var timeInChapter = bt - chStart(ch);
     if (idx === currentChapterIdx) {
       try { audio.currentTime = timeInChapter; } catch (e) {}
       if (autoplay) audio.play().catch(function () {});
@@ -190,9 +225,10 @@ var RepoStoryPlayer = (function () {
     var ch = getCurrentChapter();
     if (!ch) return null;
     var ct = bt.chapters.find(function (c) { return c.index === ch.id + 1; });
-    if (!ct || !ct.chunks.length) return null;
+    if (!ct) return null;
+    var chunks = chunksFor(ct);
+    if (!chunks.length) return null;
     var timeInChapter = audio.currentTime || 0;
-    var chunks = ct.chunks;
     var lo = 0, hi = chunks.length - 1;
     while (lo < hi) {
       var mid = (lo + hi + 1) >> 1;
@@ -218,7 +254,7 @@ var RepoStoryPlayer = (function () {
         if (book.chapters.length > 1) probes.push(book.chapters[book.chapters.length - 1]);
       }
       return Promise.all(probes.map(function (ch) {
-        var url = audioUrlFor(ch);
+        var url = (config.audioBaseUrl || 'audio/') + ch.filename;  // full track, mode-independent
         var abs = new URL(url, window.location.href).href;
         return cache.match(url).then(function (r) {
           return r || cache.match(abs);
@@ -270,16 +306,21 @@ var RepoStoryPlayer = (function () {
       // and the counter only flashes on chapters that actually fetch).
       var chain = Promise.resolve();
       book.chapters.forEach(function (ch, i) {
-        chain = chain.then(function () {
-          var url = audioUrlFor(ch);
-          var abs = new URL(url, window.location.href).href;
-          return cache.match(abs).then(function (existing) {
-            if (existing) return;  // already cached → skip, no UI flash
-            btn.innerHTML = 'Ch ' + (i + 1) + '/' + total;
-            return fetch(abs).then(function (r) {
-              if (!r.ok) throw new Error('fetch ' + url + ' failed');
-              return r.blob().then(function (blob) {
-                return cache.put(abs, new Response(blob, { headers: r.headers }));
+        // Both tracks, mode-independent: offline must work in either mode.
+        var files = [ch.filename];
+        if (ch.summary) files.push(ch.summary.filename);
+        files.forEach(function (file) {
+          chain = chain.then(function () {
+            var url = (config.audioBaseUrl || 'audio/') + file;
+            var abs = new URL(url, window.location.href).href;
+            return cache.match(abs).then(function (existing) {
+              if (existing) return;  // already cached → skip, no UI flash
+              btn.innerHTML = 'Ch ' + (i + 1) + '/' + total;
+              return fetch(abs).then(function (r) {
+                if (!r.ok) throw new Error('fetch ' + url + ' failed');
+                return r.blob().then(function (blob) {
+                  return cache.put(abs, new Response(blob, { headers: r.headers }));
+                });
               });
             });
           });
@@ -517,7 +558,7 @@ var RepoStoryPlayer = (function () {
 
     chunksEl.innerHTML = '';
 
-    ct.chunks.forEach(function (chunk) {
+    chunksFor(ct).forEach(function (chunk) {
       var div = document.createElement('div');
       div.className = 'transcript-chunk';
       if (isSceneBreakChunk(chunk)) div.className += ' scene-break';
@@ -604,6 +645,38 @@ var RepoStoryPlayer = (function () {
     if (followTranscript) scrollToActiveChunk();  // reflow moved the text
   }
 
+
+  // Summary-clock cumulative starts for the open book; chapters lacking a
+  // summary track fall back to their full audio + duration in summary mode.
+  function computeSummaryTimeline(book) {
+    if (!bookHasSummaries(book)) { summaryStarts = null; summaryTotal = 0; return; }
+    summaryStarts = [];
+    var t = 0;
+    book.chapters.forEach(function (ch) {
+      summaryStarts.push(t);
+      t += (ch.summary ? ch.summary.duration : ch.duration) || 0;
+    });
+    summaryTotal = t;
+  }
+
+  function setSummaryMode(on, opts) {
+    if (on && !bookHasSummaries(currentBook)) on = false;
+    var changed = on !== summaryMode;
+    summaryMode = on;
+    localStorage.setItem('rs-summary', on ? '1' : '0');
+    var fullBtn = config.container.querySelector('#mode-full');
+    var sumBtn = config.container.querySelector('#mode-summary');
+    if (fullBtn) fullBtn.classList.toggle('on', !on);
+    if (sumBtn) sumBtn.classList.toggle('on', on);
+    if (!currentBook || (!changed && !(opts && opts.force))) return;
+    // The two clocks don't map onto each other — restart the chapter.
+    var wasPlaying = !audio.paused;
+    lastFormattedTime = '';
+    lastPlayState = null;      // forces the total-time refresh next frame
+    lastActiveChunkId = null;
+    renderTranscriptChunks(currentChapterIdx + 1);
+    loadChapter(currentChapterIdx, 0, wasPlaying);
+  }
 
   // Reading mode: transcript-only view — chapter panel and header chrome
   // hidden, controls compacted (see .reading-mode rules in player.css).
@@ -710,8 +783,7 @@ var RepoStoryPlayer = (function () {
       renderTranscriptChunks(ch.id + 1);
     }
 
-    var chDur = ch.duration || (ch.end - ch.start);
-    var pct = Math.max(0, Math.min(100, ((audio.currentTime || 0) / chDur) * 100));
+    var pct = Math.max(0, Math.min(100, ((audio.currentTime || 0) / chDur(ch)) * 100));
     chapterProgs[ch.id].style.width = pct + '%';
     if (chapterScrubs[ch.id]) {
       chapterScrubs[ch.id].style.left = 'calc(' + pct + '% - 6px)';
@@ -773,13 +845,25 @@ var RepoStoryPlayer = (function () {
 
     dom.bookTitle.textContent = currentBook.title;
 
+    // Summary toggle: timeline + visibility + effective mode for this book.
+    computeSummaryTimeline(currentBook);
+    var hasSummaries = bookHasSummaries(currentBook);
+    var toggle = container.querySelector('#mode-toggle');
+    if (toggle) toggle.style.display = hasSummaries ? '' : 'none';
+    var p = getProgress(idx);
+    summaryMode = hasSummaries &&
+      (p.summary !== undefined ? !!p.summary : localStorage.getItem('rs-summary') === '1');
+    var fullBtn = container.querySelector('#mode-full');
+    var sumBtn = container.querySelector('#mode-summary');
+    if (fullBtn) fullBtn.classList.toggle('on', !summaryMode);
+    if (sumBtn) sumBtn.classList.toggle('on', summaryMode);
+
     renderChapters();
     renderTranscript();
 
-    var p = getProgress(idx);
-    var bt = Math.max(0, Math.min(p.bookTime || 0, currentBook.duration));
+    var bt = Math.max(0, Math.min(p.bookTime || 0, bookDuration()));
     var startIdx = findChapterIdxAt(bt);
-    var startTimeInChapter = bt - currentBook.chapters[startIdx].start;
+    var startTimeInChapter = bt - chStart(currentBook.chapters[startIdx]);
     loadChapter(startIdx, startTimeInChapter, false);
 
     updatePlayer();
@@ -929,6 +1013,10 @@ var RepoStoryPlayer = (function () {
       '    <div class="transcript-panel" style="flex: 0 0 calc(50% - 5px)">' +
       '      <div class="transcript-panel-header">' +
       '        <h3>Transcript</h3>' +
+      '        <span class="mode-toggle" id="mode-toggle" style="display:none">' +
+      '          <button class="mode-btn" id="mode-full" title="Full chapter audio + transcript">Full</button>' +
+      '          <button class="mode-btn" id="mode-summary" title="Condensed summary audio + transcript">Summary</button>' +
+      '        </span>' +
       '        <button class="mini-play-btn" id="mini-play-btn" title="Play/pause">&#9654;</button>' +
       '        <button class="ts-btn ts-dec" id="ts-dec" title="Smaller text">A&#8722;</button>' +
       '        <button class="ts-btn ts-inc" id="ts-inc" title="Larger text">A+</button>' +
@@ -980,6 +1068,8 @@ var RepoStoryPlayer = (function () {
     followBtn.classList.toggle('on', followTranscript);
     followBtn.onclick = function () { setFollow(!followTranscript); };
     config.container.querySelector('#reading-btn').onclick = function () { setReadingMode(!readingMode); };
+    config.container.querySelector('#mode-full').onclick = function () { setSummaryMode(false); };
+    config.container.querySelector('#mode-summary').onclick = function () { setSummaryMode(true); };
     config.container.querySelector('#mini-play-btn').onclick = togglePlay;
     config.container.querySelector('#ts-dec').onclick = function () { stepTextSize(-1); };
     config.container.querySelector('#ts-inc').onclick = function () { stepTextSize(1); };

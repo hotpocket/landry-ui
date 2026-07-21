@@ -110,7 +110,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
    row instead of overflowing the panel's hidden edge. */
 .transcript-panel-header { display: flex; align-items: center; padding: 0.5rem 0.75rem; flex-shrink: 0; flex-wrap: wrap; row-gap: 0.25rem; }
 .transcript-panel-header h3 { font-size: 0.75rem; font-weight: 400; color: #555; text-transform: uppercase; letter-spacing: 0.1em; flex: 1; min-width: 0; }
-.follow-btn, .reading-btn, .mini-play-btn { white-space: nowrap; }
+.follow-btn, .reading-btn, .mini-play-btn, .mode-btn { white-space: nowrap; }
+.mode-toggle { display: inline-flex; gap: 0.25rem; margin-right: 0.5rem; }
+.mode-btn { background: none; border: 1px solid #333; color: #555; border-radius: 6px;
+  font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 0.2rem 0.5rem; cursor: pointer; }
+.mode-btn:hover { color: #999; }
+.mode-btn.on { color: #4a9eff; border-color: #4a9eff; }
 .follow-btn, .reading-btn { background: none; border: 1px solid #333; color: #555; border-radius: 6px;
   font-size: 0.7rem; line-height: 1; padding: 0.25rem 0.5rem; cursor: pointer;
   text-transform: uppercase; letter-spacing: 0.05em; transition: color 0.15s, border-color 0.15s; }

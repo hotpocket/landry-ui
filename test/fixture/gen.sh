@@ -15,6 +15,11 @@ for n in 1 2; do
     ffmpeg -y -f lavfi -i anullsrc=r=24000:cl=mono -t 30 -c:a aac -b:a 32k \
       -movflags +faststart "$m4a" -loglevel error
   fi
+  summ="$OUT/audio/chapter_000${n}.summary.m4a"
+  if [[ ! -f $summ ]]; then
+    ffmpeg -y -f lavfi -i anullsrc=r=24000:cl=mono -t 6 -c:a aac -b:a 32k \
+      -movflags +faststart "$summ" -loglevel error
+  fi
 done
 
 python3 - "$OUT" <<'EOF'
@@ -28,18 +33,39 @@ def chunks(count, dur):
              "start": round(i * dur, 3), "end": round((i + 1) * dur, 3)}
             for i in range(count)]
 
-transcripts = {"books": [{"slug": "test-book", "chapters": [
-    {"index": 1, "title": "One", "chunks": chunks(40, 0.7)},
-    {"index": 2, "title": "Two", "chunks": chunks(10, 0.7)},
-]}]}
+def sum_chunks(count, dur, tag):
+    return [{"index": i, "text": f"Summary {tag} chunk {i} condensed for testing.",
+             "start": round(i * dur, 3), "end": round((i + 1) * dur, 3)}
+            for i in range(count)]
 
-books = [{"slug": "test-book", "title": "Test Book", "artist": "Fixture", "duration": 60.0,
-          "chapters": [
-    {"id": 0, "n": 1, "title": "Chapter 1: One", "filename": "chapter_0001.m4a",
-     "start": 0.0, "end": 30.0, "duration": 30.0, "size": 1},
-    {"id": 1, "n": 2, "title": "Chapter 2: Two", "filename": "chapter_0002.m4a",
-     "start": 30.0, "end": 60.0, "duration": 30.0, "size": 1},
-]}]
+transcripts = {"books": [
+    {"slug": "test-book", "chapters": [
+        {"index": 1, "title": "One", "chunks": chunks(40, 0.7),
+         "summary_chunks": sum_chunks(4, 1.5, "one")},
+        {"index": 2, "title": "Two", "chunks": chunks(10, 0.7),
+         "summary_chunks": sum_chunks(4, 1.5, "two")},
+    ]},
+    {"slug": "plain-book", "chapters": [
+        {"index": 1, "title": "Only", "chunks": chunks(10, 0.7)},
+    ]},
+]}
+
+books = [
+    {"slug": "test-book", "title": "Test Book", "artist": "Fixture", "duration": 60.0,
+     "chapters": [
+        {"id": 0, "n": 1, "title": "Chapter 1: One", "filename": "chapter_0001.m4a",
+         "start": 0.0, "end": 30.0, "duration": 30.0, "size": 1,
+         "summary": {"filename": "chapter_0001.summary.m4a", "duration": 6.0, "size": 1}},
+        {"id": 1, "n": 2, "title": "Chapter 2: Two", "filename": "chapter_0002.m4a",
+         "start": 30.0, "end": 60.0, "duration": 30.0, "size": 1,
+         "summary": {"filename": "chapter_0002.summary.m4a", "duration": 6.0, "size": 1}},
+    ]},
+    {"slug": "plain-book", "title": "Plain Book", "artist": "Fixture", "duration": 30.0,
+     "chapters": [
+        {"id": 0, "n": 1, "title": "Chapter 1: Only", "filename": "chapter_0001.m4a",
+         "start": 0.0, "end": 30.0, "duration": 30.0, "size": 1},
+    ]},
+]
 
 tr_uri = "data:application/json;base64," + base64.b64encode(
     json.dumps(transcripts).encode()).decode()

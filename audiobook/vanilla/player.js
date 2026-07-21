@@ -1017,6 +1017,7 @@ var RepoStoryPlayer = (function () {
       '          <button class="mode-btn" id="mode-full" title="Full chapter audio + transcript">Full</button>' +
       '          <button class="mode-btn" id="mode-summary" title="Condensed summary audio + transcript">Summary</button>' +
       '        </span>' +
+      '        <span class="th-spacer"></span>' +
       '        <button class="mini-play-btn" id="mini-play-btn" title="Play/pause">&#9654;</button>' +
       '        <button class="ts-btn ts-dec" id="ts-dec" title="Smaller text">A&#8722;</button>' +
       '        <button class="ts-btn ts-inc" id="ts-inc" title="Larger text">A+</button>' +

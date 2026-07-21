@@ -62,6 +62,19 @@ const btns = await page.evaluate(() => ({
 }));
 check(btns.full && btns.summary && btns.visible, 'A1: Full/Summary buttons render in transcript header');
 check(btns.fullOn && !btns.summaryOn, 'A2: Full is active by default');
+// Placement: toggle follows the TRANSCRIPT label (left side), not the
+// right-aligned control cluster.
+const pos = await page.evaluate(() => {
+  const h3 = document.querySelector('.transcript-panel-header h3');
+  const range = document.createRange();
+  range.selectNodeContents(h3);
+  const textRight = range.getBoundingClientRect().right;  // end of the label TEXT, not the flexed box
+  const tg = document.querySelector('#mode-toggle').getBoundingClientRect();
+  const dec = document.querySelector('#ts-dec').getBoundingClientRect();
+  return { gap: tg.left - textRight, beforeDec: tg.right <= dec.left };
+});
+check(pos.gap >= 0 && pos.gap < 40 && pos.beforeDec,
+  `A4: toggle sits just after the TRANSCRIPT label (gap ${pos.gap.toFixed(0)}px)`);
 check((await audioSrc()).endsWith('chapter_0001.m4a'), 'A3: full audio loaded by default');
 
 // B: switch to Summary

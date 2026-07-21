@@ -415,7 +415,7 @@ var RepoStoryPlayer = (function () {
       var li = document.createElement('li');
       li.id = 'ch-' + i;
       li.setAttribute('data-ch', i + 1);
-      var dur = ch.duration || (ch.end - ch.start);
+      var dur = chDur(ch);
 
       var progressEl = document.createElement('div');
       progressEl.className = 'ch-progress';
@@ -461,10 +461,10 @@ var RepoStoryPlayer = (function () {
       chapterProgs.push(progressEl);
       chapterScrubs.push(scrubberEl);
 
-      if (i > 0 && currentBook.duration > 0) {
+      if (i > 0 && bookDuration() > 0) {
         var mark = document.createElement('div');
         mark.className = 'chapter-mark';
-        mark.style.left = (ch.start / currentBook.duration * 100) + '%';
+        mark.style.left = (chStart(ch) / bookDuration() * 100) + '%';
         dom.trackBar.appendChild(mark);
       }
     });
@@ -674,6 +674,8 @@ var RepoStoryPlayer = (function () {
     lastFormattedTime = '';
     lastPlayState = null;      // forces the total-time refresh next frame
     lastActiveChunkId = null;
+    lastActiveChapterId = null;  // chapter list re-renders on the new clock
+    renderChapters();
     renderTranscriptChunks(currentChapterIdx + 1);
     loadChapter(currentChapterIdx, 0, wasPlaying);
   }

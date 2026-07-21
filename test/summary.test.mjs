@@ -89,6 +89,8 @@ const stateB = await page.evaluate(() => ({
 }));
 check(stateB.summaryOn && !stateB.fullOn, 'B3: Summary button reflects state');
 check(stateB.total === '0:12', `B4: total time is summary timeline (0:12, got ${stateB.total})`);
+const durB = await page.evaluate(() => document.querySelector('#chapter-list .ch-duration').textContent);
+check(durB === '0:06', `B5: chapter-pane duration shows summary length (0:06, got ${durB})`);
 
 // C: summary chunk click seeks summary audio
 await page.click('#tc-1-2');
@@ -101,6 +103,8 @@ await page.click('#mode-full');
 await waitTicks();
 check((await audioSrc()).endsWith('chapter_0001.m4a'), 'D1: full audio restored');
 check((await firstChunkText()).startsWith('Chunk 0'), 'D2: full transcript restored');
+const durD = await page.evaluate(() => document.querySelector('#chapter-list .ch-duration').textContent);
+check(durD === '0:30', `D3: chapter-pane duration restored to full length (0:30, got ${durD})`);
 
 // E: persistence across reload
 await page.click('#mode-summary');

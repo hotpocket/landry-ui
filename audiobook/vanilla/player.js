@@ -359,7 +359,9 @@ var RepoStoryPlayer = (function () {
       info.style.flex = '1';
       info.style.cursor = 'pointer';
       info.innerHTML = '<div class="title">' + book.title + '</div>' +
-        '<div class="meta">' + book.chapters.length + ' chapters &middot; ' + formatTime(book.duration) + '</div>';
+        '<div class="meta">' + book.chapters.length + ' chapters &middot; ' + formatTime(book.duration) + '</div>' +
+        (book.description ? '<div class="book-desc"></div>' : '');
+      if (book.description) info.querySelector('.book-desc').textContent = book.description;
 
       var actions = document.createElement('div');
       actions.className = 'book-actions';

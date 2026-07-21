@@ -45,6 +45,16 @@ const audioSrc = () => page.evaluate(() => document.querySelector('audio').src);
 const firstChunkText = () => page.evaluate(() =>
   document.querySelector('.transcript-chunk .chunk-text')?.textContent || '');
 
+// L: library book descriptions (optional book.description one-liner)
+await page.goto('file://' + fixture);
+await page.waitForSelector('.book-item', { timeout: 5000 });
+const lib = await page.evaluate(() => ({
+  desc: document.querySelectorAll('.book-item')[0].querySelector('.book-desc')?.textContent || '',
+  plainHasDesc: !!document.querySelectorAll('.book-item')[1].querySelector('.book-desc'),
+}));
+check(lib.desc === 'A test book about testing.', `L1: library shows book description (got "${lib.desc}")`);
+check(!lib.plainHasDesc, 'L2: book without description renders no desc element');
+
 await page.goto('file://' + fixture + '#/test-book');
 await page.waitForSelector('.transcript-chunk', { timeout: 5000 });
 await page.waitForFunction(() => {

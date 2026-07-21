@@ -52,6 +52,7 @@ transcripts = {"books": [
 
 books = [
     {"slug": "test-book", "title": "Test Book", "artist": "Fixture", "duration": 60.0,
+     "description": "A test book about testing.",
      "chapters": [
         {"id": 0, "n": 1, "title": "Chapter 1: One", "filename": "chapter_0001.m4a",
          "start": 0.0, "end": 30.0, "duration": 30.0, "size": 1,

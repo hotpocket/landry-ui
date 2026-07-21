@@ -10,6 +10,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .book-item:hover { background: #252525; }
 .book-item .title { font-size: 1rem; }
 .book-item .meta { font-size: 0.8rem; color: #666; }
+.book-item .book-desc { font-size: 0.85rem; color: #999; margin-top: 0.35rem; }
 .book-actions { display: flex; align-items: center; gap: 0.75rem; flex-shrink: 0; }
 .book-item .progress-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; flex-shrink: 0; }
 .book-item .progress-dot.in-progress { background: #4a9eff; }

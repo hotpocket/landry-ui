@@ -78,6 +78,30 @@ RepoStoryPlayer.init({
 </script>
 ```
 
+##### Stamp the shell version when you publish
+
+`sw.js` ships with `SHELL_VERSION = 'dev'`, which is right for serving the
+component locally but wrong for a published site. The browser only reinstalls a
+service worker whose bytes changed, so with a constant version a rebuilt site
+keeps serving the previous build's cached `index.html` whenever the network is
+unreachable. Since the chapter list is inlined into `index.html`, that surfaces
+as an old chapter list against current audio.
+
+Stamp it with a content hash of the shell you just built, as the last step of
+your build:
+
+```bash
+STAMP=$(cat site/index.html site/transcripts.json | md5sum | cut -c1-8)
+sed -i "s/var SHELL_VERSION = 'dev'/var SHELL_VERSION = '$STAMP'/" site/sw.js
+sed -i "s|transcriptUrl: 'transcripts.json'|transcriptUrl: 'transcripts.json?v=$STAMP'|" site/index.html
+```
+
+`sw.js` derives both its cache name and its cached transcript URL from
+`SHELL_VERSION`, so stamping that one line is enough: the worker reinstalls, and
+`activate()` evicts the previous build's cache. The second `sed` keeps the URL
+the page requests aligned with the one the worker cached — mismatch them and
+offline transcripts break while everything else appears fine.
+
 #### React
 
 ```tsx

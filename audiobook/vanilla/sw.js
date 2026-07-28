@@ -4,15 +4,37 @@
 // New chapters added to the deployed site do not invalidate previously-cached
 // chapters. The legacy single-file `audio/book.m4b` entry is evicted on activate
 // so old installs reclaim that storage.
-var CACHE_NAME = 'audiobook-shell';
+// SHELL_VERSION is the one line build tooling stamps, with a content hash of the
+// shell it just produced. Two things depend on it changing:
+//
+//   1. The browser only reinstalls a service worker whose bytes changed. With a
+//      constant cache name, a rebuilt site keeps serving the previous build's
+//      cached index.html whenever the network is unreachable — and because the
+//      book's chapter list is inlined into index.html, that shows up as an old
+//      chapter list against current audio, which reads as data loss.
+//   2. activate() evicts every cache that isn't the current name, so bumping
+//      this is also what garbage-collects the previous build's shell.
+//
+// Leave it as 'dev' when serving the component directly; hosts that publish a
+// site should stamp it. See README for the one-line sed.
+var SHELL_VERSION = 'dev';
+
+var CACHE_NAME = 'audiobook-shell-' + SHELL_VERSION;
 var AUDIO_CACHE = 'audiobook-audio';
+
+// Versioned so a rebuilt transcript is refetched rather than served from the
+// previous build's cache entry. Kept unversioned in dev so local edits show up
+// on reload without a rebuild.
+var TRANSCRIPTS_FILE = SHELL_VERSION === 'dev'
+  ? 'transcripts.json'
+  : 'transcripts.json?v=' + SHELL_VERSION;
 
 var SHELL_FILES = [
   './',
   'player.css',
   'player.js',
   'feedback.js',
-  'transcripts.json',
+  TRANSCRIPTS_FILE,
   'manifest.webmanifest',
   'icons/icon-192.png',
   'icons/icon-512.png'
@@ -26,7 +48,17 @@ var LEGACY_AUDIO_KEYS = ['audio/book.m4b', 'audio/chapter_1073.m4a'];
 self.addEventListener('install', function (e) {
   e.waitUntil(
     caches.open(CACHE_NAME).then(function (cache) {
-      return cache.addAll(SHELL_FILES);
+      // Deliberately not cache.addAll(): addAll is atomic, so a single missing
+      // file rejects the whole batch and leaves the shell cache EMPTY. A site
+      // published before its transcripts.json existed would install a worker
+      // that caches nothing at all, offline would break entirely, and no error
+      // would surface anywhere. Cache each file on its own merits instead and
+      // let the rest survive one bad entry.
+      return Promise.all(SHELL_FILES.map(function (file) {
+        return cache.add(file).catch(function (err) {
+          console.warn('[sw] shell file not cached:', file, err);
+        });
+      }));
     })
   );
   self.skipWaiting();

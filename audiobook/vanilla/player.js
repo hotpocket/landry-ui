@@ -293,12 +293,19 @@ var RepoStoryPlayer = (function () {
 
     var total = book.chapters.length;
 
+    // Shell failures are recorded rather than swallowed: audio caching can
+    // succeed while a shell file (typically transcripts.json) 404s, and a
+    // "Downloaded ✓" on a shell that is missing its transcripts looks, offline,
+    // exactly like a broken app.
+    var shellFailures = [];
+
     caches.open('audiobook-audio').then(function (cache) {
       return Promise.all(shell.map(function (file) {
         var abs = new URL(file, window.location.href).href;
         return fetch(abs).then(function (r) {
-          if (r.ok) return cache.put(abs, r);
-        }).catch(function () {});
+          if (!r.ok) { shellFailures.push(file); return; }
+          return cache.put(abs, r);
+        }).catch(function () { shellFailures.push(file); });
       })).then(function () { return cache; });
     }).then(function (cache) {
       // Step 2: each chapter, sequentially. Already-cached chapters are
@@ -331,8 +338,14 @@ var RepoStoryPlayer = (function () {
       cleanup();
       btn.classList.remove('downloading');
       btn.classList.add('downloaded');
-      btn.innerHTML = 'Downloaded &#10003;';
-      btn.title = 'Available offline';
+      if (shellFailures.length) {
+        btn.innerHTML = 'Downloaded &#9888;';
+        btn.title = 'Audio is cached, but these app files failed and offline may be '
+          + 'incomplete: ' + shellFailures.join(', ') + '. Reload and download again.';
+      } else {
+        btn.innerHTML = 'Downloaded &#10003;';
+        btn.title = 'Available offline';
+      }
     }).catch(function () {
       cleanup();
       btn.classList.remove('downloading');

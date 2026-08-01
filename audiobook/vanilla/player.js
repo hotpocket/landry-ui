@@ -356,12 +356,61 @@ var RepoStoryPlayer = (function () {
 
   // --- Rendering ---
 
+  // The flat books array is the index space for progress and routing, so a
+  // book rendered from the tree has to resolve back to its position in it.
+  // Identity comparison is not enough: tree and books arrive as separate JSON
+  // objects describing the same book.
+  function bookIndex(book) {
+    var key = book.book_id || book.slug;
+    for (var i = 0; i < config.books.length; i++) {
+      var b = config.books[i];
+      if ((b.book_id || b.slug) === key) return i;
+    }
+    return -1;
+  }
+
   function renderLibrary() {
     var container = config.container;
     var library = container.querySelector('#library');
     var list = library.querySelector('#book-list');
     list.innerHTML = '';
-    config.books.forEach(function (book, i) {
+
+    // Nested when the payload carries a tree, flat otherwise. karagame and
+    // brandonlandry.com send no tree at all and must keep rendering exactly as
+    // they did, so the flat array stays the fallback rather than a legacy path.
+    var tree = config.tree;
+    var hasTree = tree && ((tree.children && tree.children.length) ||
+                           (tree.books && tree.books.length));
+    if (hasTree) {
+      renderTreeNode(tree, list, 0);
+      return;
+    }
+    config.books.forEach(function (book, i) { renderBookItem(book, i, list); });
+  }
+
+  function renderTreeNode(node, parent, depth) {
+    (node.books || []).forEach(function (book) {
+      var idx = bookIndex(book);
+      if (idx >= 0) renderBookItem(config.books[idx], idx, parent);
+    });
+    (node.children || []).forEach(function (child) {
+      var group = document.createElement('div');
+      group.className = 'lib-group';
+      group.setAttribute('data-path', child.path);
+      var heading = document.createElement('div');
+      heading.className = 'lib-group-name';
+      heading.textContent = child.name;
+      group.appendChild(heading);
+      var body = document.createElement('div');
+      body.className = 'lib-group-body';
+      group.appendChild(body);
+      parent.appendChild(group);
+      renderTreeNode(child, body, depth + 1);
+    });
+  }
+
+  function renderBookItem(book, i, list) {
+    {
       var p = getProgress(i);
       var status = p.progress > 0.98 ? 'complete' : p.progress > 0.01 ? 'in-progress' : '';
       var div = document.createElement('div');
@@ -405,7 +454,7 @@ var RepoStoryPlayer = (function () {
       div.appendChild(info);
       div.appendChild(actions);
       list.appendChild(div);
-    });
+    }
   }
 
   // --- Chapter scrubber state ---
@@ -839,6 +888,15 @@ var RepoStoryPlayer = (function () {
   function openBook(idx, opts) {
     currentBook = config.books[idx];
     currentBookIdx = idx;
+    // A multi-book site keeps each book's transcript beside its audio, so
+    // there is no single merged transcripts.json to preload. Fetch this
+    // book's own when it opens; a book without one keeps using the global
+    // config.transcriptUrl loaded at init.
+    if (currentBook && currentBook.transcriptUrl &&
+        loadedTranscriptUrl !== currentBook.transcriptUrl) {
+      loadedTranscriptUrl = currentBook.transcriptUrl;
+      loadTranscripts(currentBook.transcriptUrl);
+    }
     lastActiveChapterId = null;
     lastActiveChunkId = null;
     lastFormattedTime = '';
@@ -986,6 +1044,8 @@ var RepoStoryPlayer = (function () {
   }
 
   // --- Init ---
+
+  var loadedTranscriptUrl = null;
 
   function loadTranscripts(url) {
     if (!url) return;

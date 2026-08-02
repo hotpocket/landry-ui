@@ -139,6 +139,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .player-view.reading-mode .now-playing,
 .player-view.reading-mode .chapter-panel,
 .player-view.reading-mode .panel-divider,
+/* The heading names the only thing left on screen, so it says nothing and
+   crowds the controls sharing the one row that survives. */
+.player-view.reading-mode .transcript-panel-header h3,
 .player-view.reading-mode .player-controls { display: none; }
 /* Full-bleed: reading mode is "give me the text" — drop the 90vw margins,
    keep a thin fixed gutter so text doesn't touch the screen edge. */

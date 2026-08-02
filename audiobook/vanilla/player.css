@@ -26,6 +26,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 /* 90vw: use wide screens; pane split is the user's to drag. */
 .player-view { max-width: 90vw; margin: 0 auto; padding: 2rem 1rem; display: none; }
 .player-view.active { display: flex; flex-direction: column; height: 100vh; height: 100svh; }
+/* Embedded mode: the player is a component in someone else's page, not the
+   page. 100svh is then exactly the host's chrome too tall and pushes the
+   transport below the fold, so fill the container instead and let the host
+   decide how much room that is. Set by init({embedded:true}). */
+.player-embedded.player-view.active { height: 100%; max-width: none; }
 @media (max-width: 480px) { .player-view { padding: 1rem 0.5rem 0.5rem; } }
 
 .back-btn { background: none; border: none; color: #666; font-size: 0.9rem; cursor: pointer; padding: 0.5rem 0; margin-bottom: 1rem; flex-shrink: 0; }
@@ -238,3 +243,24 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 /* Indent by nesting rather than by depth arithmetic, so arbitrarily deep
    categories stay aligned without the renderer tracking pixel offsets. */
 .lib-group-body { padding-left: 0.9rem; border-left: 1px solid rgba(128,128,128,0.22); }
+
+
+/* Narrow screens: stack the panes instead of splitting them.
+ *
+ * The 50/50 split is right on a desktop and wrong on a phone — half of 390px
+ * is about ten words per line in the transcript, which is the thing the reader
+ * is actually here for. Chapters get a slice off the top, the transcript takes
+ * the rest, and the drag divider goes away because with the panes stacked it
+ * would resize the wrong axis.
+ *
+ * !important is required because the split is drag-resizable, so the player
+ * writes it as an inline style — that is state, not styling, and a media query
+ * cannot outrank it otherwise.
+ */
+@media (max-width: 620px) {
+  .content-area { flex-direction: column; }
+  .chapter-panel { flex: 0 0 auto !important; max-height: 30vh; }
+  .transcript-panel { flex: 1 1 auto !important; }
+  .panel-divider { display: none; }
+  .player-view.reading-mode .chapter-panel { display: none; }
+}

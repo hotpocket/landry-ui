@@ -65,6 +65,10 @@ var RepoStoryPlayer = (function () {
   // Cached DOM references (set once in openBook)
   var dom = {};
 
+  // Chrome the host may be providing itself; see init({chrome:{...}}).
+  var hideBackButton = false;
+  var hideNowPlaying = false;
+
   function formatTime(s) {
     if (isNaN(s)) return '0:00';
     var h = Math.floor(s / 3600);
@@ -896,7 +900,17 @@ var RepoStoryPlayer = (function () {
     var container = config.container;
 
     container.querySelector('#library').style.display = 'none';
-    container.querySelector('#player-view').classList.add('active');
+    var playerView = container.querySelector('#player-view');
+    playerView.classList.add('active');
+    if (config.embedded) playerView.classList.add('player-embedded');
+    if (hideBackButton) {
+      var backEl = container.querySelector('#back-btn');
+      if (backEl) backEl.style.display = 'none';
+    }
+    if (hideNowPlaying) {
+      var npEl = container.querySelector('.now-playing');
+      if (npEl) npEl.style.display = 'none';
+    }
 
     dom.currentTime = container.querySelector('#current-time');
     dom.totalTime = container.querySelector('#total-time');
@@ -1072,6 +1086,13 @@ var RepoStoryPlayer = (function () {
 
   function init(opts) {
     config = opts;
+
+    // Embedded consumers supply their own page chrome. Rather than have each
+    // one hide our copies in their stylesheet (which is what books.landry.bot
+    // was doing), let them say so once here.
+    var chrome = opts.chrome || {};
+    hideBackButton = chrome.back === false;
+    hideNowPlaying = chrome.nowPlaying === false;
 
     RepoStoryFeedback.init(opts.feedbackUrl);
     loadTranscripts(opts.transcriptUrl);

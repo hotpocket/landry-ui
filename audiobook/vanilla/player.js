@@ -170,6 +170,13 @@ var RepoStoryPlayer = (function () {
 
   // Load a chapter into the audio element. timeInChapter = seconds into chapter.
   // autoplay controls whether to .play() once metadata is ready.
+  // The reading-mode chapter row. Written whenever the chapter is known, not
+  // only when it is playing — it is hidden outside reading mode anyway, so
+  // keeping it current costs nothing and never shows a stale chapter.
+  function setReadingChapterLabel(ch) {
+    if (dom.readingChapter && ch) dom.readingChapter.textContent = ch.title;
+  }
+
   function loadChapter(idx, timeInChapter, autoplay) {
     if (!currentBook) return;
     if (idx < 0 || idx >= currentBook.chapters.length) return;
@@ -179,6 +186,10 @@ var RepoStoryPlayer = (function () {
     var myGen = ++loadGen;
 
     var ch = currentBook.chapters[idx];
+    // Now, not on the next tick: the tick that relabels needs loaded audio,
+    // and a chapter change the reader asked for must show immediately even if
+    // the file is slow (or missing).
+    setReadingChapterLabel(ch);
     audio.src = audioUrlFor(ch);
     audio.load();
 
@@ -933,6 +944,7 @@ var RepoStoryPlayer = (function () {
       chapterLis[ch.id].classList.add('active');
 
       dom.chapterTitle.textContent = ch.title;
+      setReadingChapterLabel(ch);
 
       lastActiveChapterId = ch.id;
       lastActiveChunkId = null;
@@ -1009,6 +1021,7 @@ var RepoStoryPlayer = (function () {
     dom.trackBar = container.querySelector('#track-bar');
     dom.transcriptChunks = container.querySelector('#transcript-chunks');
     dom.miniPlayBtn = container.querySelector('#mini-play-btn');
+    dom.readingChapter = container.querySelector('#reading-chapter');
 
     dom.bookTitle.textContent = currentBook.title;
 
@@ -1212,6 +1225,10 @@ var RepoStoryPlayer = (function () {
       '    </div>' +
       '    <div class="panel-divider"></div>' +
       '    <div class="transcript-panel" style="flex: 0 0 calc(50% - 5px)">' +
+      // Reading mode only. The chapter list normally says which chapter this
+      // is, and reading mode hides it — so the label moves here, above the row
+      // whose buttons change it.
+      '      <div class="reading-chapter" id="reading-chapter"></div>' +
       '      <div class="transcript-panel-header">' +
       '        <h3>Transcript</h3>' +
       '        <span class="mode-toggle" id="mode-toggle" style="display:none">' +
@@ -1219,7 +1236,12 @@ var RepoStoryPlayer = (function () {
       '          <button class="mode-btn" id="mode-summary" title="Condensed summary audio + transcript">Summary</button>' +
       '        </span>' +
       '        <span class="th-spacer"></span>' +
+      // Reading mode drops the transport and the chapter list, which between
+      // them were the only ways to change chapter — so prev/next join the one
+      // row that survives.
+      '        <button class="mini-nav-btn" id="mini-prev-btn" title="Previous chapter">&laquo;</button>' +
       '        <button class="mini-play-btn" id="mini-play-btn" title="Play/pause">&#9654;</button>' +
+      '        <button class="mini-nav-btn mini-next" id="mini-next-btn" title="Next chapter">&raquo;</button>' +
       '        <button class="ts-btn ts-dec" id="ts-dec" title="Smaller text">A&#8722;</button>' +
       '        <button class="ts-btn ts-inc" id="ts-inc" title="Larger text">A+</button>' +
       '        <button class="follow-btn" id="follow-btn" title="Follow along with playback">&#8982; follow</button>' +
@@ -1273,6 +1295,8 @@ var RepoStoryPlayer = (function () {
     config.container.querySelector('#mode-full').onclick = function () { setSummaryMode(false); };
     config.container.querySelector('#mode-summary').onclick = function () { setSummaryMode(true); };
     config.container.querySelector('#mini-play-btn').onclick = togglePlay;
+    config.container.querySelector('#mini-prev-btn').onclick = prevChapter;
+    config.container.querySelector('#mini-next-btn').onclick = nextChapter;
     config.container.querySelector('#ts-dec').onclick = function () { stepTextSize(-1); };
     config.container.querySelector('#ts-inc').onclick = function () { stepTextSize(1); };
     applyTextSize();

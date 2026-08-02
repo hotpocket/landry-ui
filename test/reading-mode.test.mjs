@@ -18,6 +18,12 @@
 //   D. playback stays reachable — the mini play button survives
 //   E. the text size and follow controls survive
 //   F. the transcript really does get taller
+//   G. chapter navigation is reachable — without the chapter list there is no
+//      other way to change chapter, so prev/next join the surviving row
+//   H. a row above that one names the chapter being read, because the chapter
+//      list that used to say so is gone
+//   I. neither appears outside reading mode — the transport and the chapter
+//      list already do both jobs there
 import { createRequire } from 'module';
 import { readFileSync } from 'fs';
 import { createServer } from 'http';
@@ -94,6 +100,10 @@ async function open() {
   const p = await open();
   check(await visible(p, '.transcript-panel-header h3') === 1,
     'baseline: the "Transcript" heading is shown normally');
+  check(await visible(p, '#reading-chapter') === 0,
+    'I: no chapter row outside reading mode');
+  check(await visible(p, '#mini-prev-btn') === 0 && await visible(p, '#mini-next-btn') === 0,
+    'I: no mini chapter nav outside reading mode');
   const before = await p.$eval('#transcript-chunks', (e) => Math.round(e.getBoundingClientRect().height));
 
   await p.click('#reading-btn');
@@ -112,6 +122,29 @@ async function open() {
   const after = await p.$eval('#transcript-chunks', (e) => Math.round(e.getBoundingClientRect().height));
   check(after > before, `F: the transcript gets taller (${before} -> ${after})`);
 
+  check(await visible(p, '#mini-prev-btn') === 1 && await visible(p, '#mini-next-btn') === 1,
+    'G: chapter navigation is on the surviving row');
+  check(await visible(p, '#reading-chapter') === 1, 'H: the chapter row is shown');
+  const named = await p.$eval('#reading-chapter', (e) => e.textContent.trim());
+  check(named === 'Chapter 1', `H: it names the current chapter ("${named}")`);
+  // Above the controls, not below them: the reader's eye lands on the label
+  // before the buttons that change it.
+  const above = await p.evaluate(() => {
+    const r = document.querySelector('#reading-chapter').getBoundingClientRect();
+    const h = document.querySelector('.transcript-panel-header').getBoundingClientRect();
+    return r.bottom <= h.top + 1;
+  });
+  check(above, 'H: the chapter row sits above the controls row');
+
+  await p.click('#mini-next-btn');
+  await p.waitForTimeout(200);
+  const named2 = await p.$eval('#reading-chapter', (e) => e.textContent.trim());
+  check(named2 === 'Chapter 2', `G: next chapter navigates and relabels ("${named2}")`);
+  await p.click('#mini-prev-btn');
+  await p.waitForTimeout(200);
+  check(await p.$eval('#reading-chapter', (e) => e.textContent.trim()) === 'Chapter 1',
+    'G: previous chapter navigates back');
+
   // The controls must not be crowded off the row by what is left.
   const row = await p.evaluate(() => {
     const h = document.querySelector('.transcript-panel-header').getBoundingClientRect();
@@ -129,6 +162,8 @@ async function open() {
     'C: the way out works');
   check(await visible(p, '.transcript-panel-header h3') === 1,
     'B: the heading comes back on the way out');
+  check(await visible(p, '#reading-chapter') === 0 && await visible(p, '#mini-prev-btn') === 0,
+    'I: the chapter row and mini nav go away again');
   await p.close();
 }
 

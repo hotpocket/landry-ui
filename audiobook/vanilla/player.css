@@ -76,8 +76,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .chapter-list.scrolling::-webkit-scrollbar-thumb:hover,
 .transcript-chunks.scrolling::-webkit-scrollbar-thumb:hover { background: #6bb3ff; }
 
-/* Content area: chapters + transcript side by side */
-.content-area { display: flex; flex: 1; min-height: 0; margin-bottom: 1rem; background: #0f0f0f; border-radius: 8px; overflow: hidden; }
+/* Content area: chapters + transcript side by side.
+ *
+ * The surface is a variable so a host whose page is not #0f0f0f can hand the
+ * player its own background instead of overriding this rule — a literal here
+ * and a literal in the host's stylesheet are two places to drift, and the seam
+ * shows the moment they do. The fallback keeps standalone builds unchanged. */
+.content-area { display: flex; flex: 1; min-height: 0; margin-bottom: 1rem; background: var(--player-surface, #0f0f0f); border-radius: 8px; overflow: hidden; }
 
 /* Chapter list panel (left) */
 .chapter-panel { display: flex; flex-direction: column; min-width: 80px; overflow: hidden; container-type: inline-size; }
@@ -170,12 +175,33 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .ts-dec { font-size: 0.6rem; margin-right: 2px; }
 .ts-inc { font-size: 0.8rem; margin-right: 0.5rem; }
 
-/* Mini play/pause: reading mode only, left of the follow toggle. */
-.mini-play-btn { display: none; background: none; border: 1px solid #333; color: #e0e0e0;
+/* Mini transport: reading mode only, left of the follow toggle. Prev/play/next
+   as one group — with the chapter list and the transport both hidden, these
+   are the only way to change chapter. */
+.mini-play-btn, .mini-nav-btn { display: none; background: none; border: 1px solid #333; color: #e0e0e0;
   border-radius: 6px; font-size: 0.8rem; line-height: 1; padding: 0.2rem 0.6rem;
   cursor: pointer; margin-right: 0.5rem; transition: color 0.15s, border-color 0.15s; }
-.mini-play-btn:hover { color: #4a9eff; border-color: #4a9eff; }
-.player-view.reading-mode .mini-play-btn { display: inline-block; }
+.mini-play-btn:hover, .mini-nav-btn:hover { color: #4a9eff; border-color: #4a9eff; }
+/* Tight against play so the three read as one control, not three; the group
+   as a whole keeps its gap from the text-size buttons. */
+.mini-nav-btn, .mini-play-btn { margin-right: 0.25rem; }
+.mini-next { margin-right: 0.75rem; }
+.player-view.reading-mode .mini-play-btn,
+.player-view.reading-mode .mini-nav-btn { display: inline-block; }
+
+/* Reading-mode chapter row. Hidden elsewhere: the chapter list and the
+   now-playing block already name the chapter there. */
+.reading-chapter { display: none; }
+.player-view.reading-mode .reading-chapter {
+  display: block;
+  flex-shrink: 0;
+  padding: 0.15rem 0.75rem 0.35rem;
+  font-size: 0.85rem;
+  color: #4a9eff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* Landscape phones: the header/controls chrome eats the screen — compact it
    even outside reading mode. */

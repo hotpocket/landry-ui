@@ -31,6 +31,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
    transport below the fold, so fill the container instead and let the host
    decide how much room that is. Set by init({embedded:true}). */
 .player-embedded.player-view.active { height: 100%; max-width: none; }
+
+/* The library view assumes it is the page too: its own heading and a page's
+   worth of padding. A host that already names the space gets a duplicated
+   heading and a gap above the books, so embedding trims the padding and
+   chrome.libraryHeading:false drops the heading. */
+.player-embedded-host .library { padding: 0.5rem 0; max-width: none; }
+.player-no-library-heading .library h1 { display: none; }
 @media (max-width: 480px) { .player-view { padding: 1rem 0.5rem 0.5rem; } }
 
 .back-btn { background: none; border: none; color: #666; font-size: 0.9rem; cursor: pointer; padding: 0.5rem 0; margin-bottom: 1rem; flex-shrink: 0; }

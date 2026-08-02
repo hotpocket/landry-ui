@@ -1181,6 +1181,14 @@ var RepoStoryPlayer = (function () {
     hideBackButton = chrome.back === false;
     hideNowPlaying = chrome.nowPlaying === false;
 
+    // Marked on the container rather than on #player-view, because the library
+    // is a sibling of the player view and needs to respond to embedding too.
+    if (opts.container) {
+      opts.container.classList.toggle('player-embedded-host', !!opts.embedded);
+      opts.container.classList.toggle('player-no-library-heading',
+                                      chrome.libraryHeading === false);
+    }
+
     RepoStoryFeedback.init(opts.feedbackUrl);
     loadTranscripts(opts.transcriptUrl);
 

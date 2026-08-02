@@ -20,6 +20,8 @@
 //   E. those options default to on, so existing consumers see no change
 //   F. narrow viewports stack the panes instead of splitting them 50/50
 //   G. autoOpenLast:false starts on the library instead of resuming
+//   H. chrome.libraryHeading:false drops the player's own library heading
+//   I. embedded mode does not apply page-sized padding to the library
 import { createRequire } from 'module';
 import { readFileSync } from 'fs';
 import { createServer } from 'http';
@@ -199,6 +201,40 @@ async function open(opts, host, viewport) {
   const kept = await b2.p.evaluate(() => localStorage.getItem('rs-last-book'));
   check(kept === '0', 'G: opting out does not erase the stored position');
   await b2.ctx.close();
+}
+
+// --- H + I: the library view inside a host ---
+//
+// The player's library renders its own <h1> and page-sized padding, both of
+// which assume it is the page. A host that already names the space gets a
+// duplicated heading and a 2rem gap above the books — books.landry.bot hid
+// both from its own stylesheet, which is the signal they belong here.
+{
+  const p = await open({ embedded: true, chrome: { libraryHeading: false } }, true);
+  await p.click('#back-btn').catch(() => {});
+  await p.waitForTimeout(200);
+  const heading = await p.$$eval('.library h1',
+    (e) => e.filter((x) => x.offsetParent !== null).length);
+  check(heading === 0, 'H: chrome.libraryHeading:false hides the library heading');
+
+  const padTop = await p.$eval('.library',
+    (e) => Math.round(parseFloat(getComputedStyle(e).paddingTop)));
+  check(padTop <= 12, `I: embedded library is not page-padded (${padTop}px)`);
+  await p.close();
+}
+
+{
+  // Defaults unchanged for anyone rendering the player as the page.
+  const p = await open({}, false);
+  await p.click('#back-btn').catch(() => {});
+  await p.waitForTimeout(200);
+  const heading = await p.$$eval('.library h1',
+    (e) => e.filter((x) => x.offsetParent !== null).length);
+  check(heading === 1, 'H: the library heading is shown by default');
+  const padTop = await p.$eval('.library',
+    (e) => Math.round(parseFloat(getComputedStyle(e).paddingTop)));
+  check(padTop >= 24, `I: standalone keeps its page padding (${padTop}px)`);
+  await p.close();
 }
 
 await browser.close();

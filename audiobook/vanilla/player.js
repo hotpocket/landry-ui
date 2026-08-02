@@ -512,6 +512,21 @@ var RepoStoryPlayer = (function () {
         scrubbing = { li: li, ch: ch, idx: i, dur: dur };
       });
 
+      // Same control by touch. The chapter list scrolls, so this one needs the
+      // long press even more than the divider does — a stray drag here would
+      // otherwise seek instead of scrolling the list.
+      (function (li, ch, i, dur) {
+        longPressDrag(scrubberEl, {
+          start: function () {
+            didDrag = false;
+            li.classList.add('scrubbing');
+            scrubbing = { li: li, ch: ch, idx: i, dur: dur };
+          },
+          move: function (t) { handleScrubMove(t); },
+          end: function () { handleScrubEnd(); },
+        });
+      })(li, ch, i, dur);
+
       li.addEventListener('mousedown', function (e) {
         if (e.target === scrubberEl) return;
         didDrag = false;
@@ -564,6 +579,67 @@ var RepoStoryPlayer = (function () {
     scrubbing = null;
   }
 
+
+  // --- Long press to drag (touch only) ---
+  //
+  // Both draggable controls sit inside scrollable panes, so an immediate touch
+  // drag competes with the scroll and one of them loses — usually the scroll,
+  // which makes the list feel stuck. A long press disambiguates: hold until it
+  // engages, then drag. Moving before it engages is a scroll, and cancels.
+  //
+  // Mouse is untouched: a cursor has no such ambiguity, and requiring a hold
+  // there would be a regression for no reason.
+  var LONG_PRESS_MS = 350;
+  var LONG_PRESS_SLOP_PX = 10;
+
+  function longPressDrag(el, handlers) {
+    var timer = null, active = false, startX = 0, startY = 0;
+
+    function cancelPress() {
+      if (timer) { clearTimeout(timer); timer = null; }
+    }
+
+    el.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1) return;   // a pinch is not a drag
+      var t = e.touches[0];
+      startX = t.clientX;
+      startY = t.clientY;
+      timer = setTimeout(function () {
+        timer = null;
+        active = true;
+        // A short buzz is the only feedback that the press took, since the
+        // finger is covering the control.
+        if (navigator.vibrate) { try { navigator.vibrate(12); } catch (err) {} }
+        handlers.start(t);
+      }, LONG_PRESS_MS);
+    }, { passive: true });
+
+    // passive:false so the drag can suppress the scroll once engaged.
+    el.addEventListener('touchmove', function (e) {
+      var t = e.touches[0];
+      if (!t) return;
+      if (timer) {
+        if (Math.abs(t.clientX - startX) > LONG_PRESS_SLOP_PX ||
+            Math.abs(t.clientY - startY) > LONG_PRESS_SLOP_PX) {
+          cancelPress();   // they were scrolling, not grabbing
+        }
+        return;
+      }
+      if (!active) return;
+      e.preventDefault();
+      handlers.move(t);
+    }, { passive: false });
+
+    function release() {
+      cancelPress();
+      if (!active) return;
+      active = false;
+      handlers.end();
+    }
+    el.addEventListener('touchend', release);
+    el.addEventListener('touchcancel', release);
+  }
+
   // --- Draggable panel divider ---
   var dividerDragging = false;
 
@@ -573,11 +649,22 @@ var RepoStoryPlayer = (function () {
     var chapterPanel = config.container.querySelector('.chapter-panel');
     var transcriptPanel = config.container.querySelector('.transcript-panel');
 
-    function resizePanels(clientX) {
+    // The panes sit side by side on a wide screen and stacked on a narrow one,
+    // so the divider resizes along whichever axis the layout is actually
+    // using. Reading it from the computed style means one media query controls
+    // both the layout and the gesture.
+    function resizePanels(clientX, clientY) {
       var rect = contentArea.getBoundingClientRect();
-      var leftPct = Math.max(5, Math.min(95, ((clientX - rect.left) / rect.width) * 100));
-      chapterPanel.style.flex = '0 0 ' + leftPct + '%';
-      transcriptPanel.style.flex = '0 0 ' + (100 - leftPct) + '%';
+      var vertical = getComputedStyle(contentArea).flexDirection === 'column';
+      var pct = vertical
+        ? ((clientY - rect.top) / rect.height) * 100
+        : ((clientX - rect.left) / rect.width) * 100;
+      pct = Math.max(5, Math.min(95, pct));
+      // setProperty with 'important': the stacked layout sets the panel flex
+      // with !important (so a stale inline value from a desktop drag cannot
+      // survive a rotate), and only an inline !important outranks that.
+      chapterPanel.style.setProperty('flex', '0 0 ' + pct + '%', 'important');
+      transcriptPanel.style.setProperty('flex', '0 0 ' + (100 - pct) + '%', 'important');
     }
 
     divider.addEventListener('mousedown', function (e) {
@@ -587,7 +674,7 @@ var RepoStoryPlayer = (function () {
     });
     document.addEventListener('mousemove', function (e) {
       if (!dividerDragging) return;
-      resizePanels(e.clientX);
+      resizePanels(e.clientX, e.clientY);
     });
     document.addEventListener('mouseup', function () {
       if (!dividerDragging) return;
@@ -595,19 +682,16 @@ var RepoStoryPlayer = (function () {
       divider.classList.remove('dragging');
     });
 
-    divider.addEventListener('touchstart', function (e) {
-      e.preventDefault();
-      dividerDragging = true;
-      divider.classList.add('dragging');
-    });
-    document.addEventListener('touchmove', function (e) {
-      if (!dividerDragging) return;
-      resizePanels(e.touches[0].clientX);
-    });
-    document.addEventListener('touchend', function () {
-      if (!dividerDragging) return;
-      dividerDragging = false;
-      divider.classList.remove('dragging');
+    longPressDrag(divider, {
+      start: function () {
+        dividerDragging = true;
+        divider.classList.add('dragging');
+      },
+      move: function (t) { resizePanels(t.clientX, t.clientY); },
+      end: function () {
+        dividerDragging = false;
+        divider.classList.remove('dragging');
+      },
     });
   }
 

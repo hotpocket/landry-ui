@@ -259,8 +259,41 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
  */
 @media (max-width: 620px) {
   .content-area { flex-direction: column; }
-  .chapter-panel { flex: 0 0 auto !important; max-height: 30vh; }
+  /* A percentage rather than auto+max-height, so a drag can override it with
+     an inline !important — inline wins over a stylesheet's !important, and the
+     split has to stay adjustable here too. */
+  .chapter-panel { flex: 0 0 30% !important; }
   .transcript-panel { flex: 1 1 auto !important; }
-  .panel-divider { display: none; }
+  /* The divider stays — stacked it resizes vertically instead of
+     horizontally. Taller than the desktop rule because a finger is not a
+     cursor, and with a visible grip so it reads as draggable. */
+  .panel-divider {
+    width: auto;
+    height: 14px;
+    cursor: row-resize;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .panel-divider::before {
+    content: '';
+    width: 36px;
+    height: 3px;
+    border-radius: 3px;
+    background: #555;
+  }
+  .panel-divider.dragging::before { background: #4a9eff; }
   .player-view.reading-mode .chapter-panel { display: none; }
+}
+
+/* Long-press-to-drag feedback. A touch drag inside a scrollable pane has to be
+   deliberate, so the control says when it has been grabbed. */
+.panel-divider.armed { background: #4a9eff; }
+.chapter-list li.scrubbing { touch-action: none; }
+.panel-divider { touch-action: none; }
+.ch-scrubber { touch-action: none; }
+/* Wider grab target on touch: 12px of finger is nothing. */
+@media (pointer: coarse) {
+  .ch-scrubber { width: 28px; }
+  .chapter-list li.active .ch-scrubber { opacity: 0.5; }
 }

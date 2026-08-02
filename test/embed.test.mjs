@@ -19,6 +19,7 @@
 //   D. chrome options suppress the back button and the now-playing block
 //   E. those options default to on, so existing consumers see no change
 //   F. narrow viewports stack the panes instead of splitting them 50/50
+//   G. autoOpenLast:false starts on the library instead of resuming
 import { createRequire } from 'module';
 import { readFileSync } from 'fs';
 import { createServer } from 'http';
@@ -162,6 +163,42 @@ async function open(opts, host, viewport) {
   });
   check(m.sideBySide, 'F2: wide screens keep chapters and transcript side by side');
   await p.close();
+}
+
+// --- G: opting out of the resume-last-book behaviour ---
+//
+// The player reopens whatever you last had open, read from localStorage. That
+// is right on a cold load and wrong when a host has just navigated you to the
+// library on purpose — you ask for the shelf and land back in the book.
+//
+// The stored position is seeded directly rather than produced by playing:
+// saveProgress writes it on timeupdate, which never fires against a stub audio
+// file. What is under test is what the player does with a stored value, not
+// how the value got there.
+{
+  const seed = async (opts) => {
+    pending = page(opts, false);
+    const ctx = await browser.newContext({ viewport: { width: 900, height: 700 } });
+    await ctx.addInitScript(() => localStorage.setItem('rs-last-book', '0'));
+    const p = await ctx.newPage();
+    p.on('pageerror', (e) => bad(`page error: ${e.message}`));
+    await p.goto(origin + '/index.html');
+    await p.waitForTimeout(500);
+    return { p, ctx };
+  };
+
+  const a = await seed({});
+  check(await a.p.$('#player-view.active') !== null,
+    'G: by default a stored last book is resumed');
+  await a.ctx.close();
+
+  const b2 = await seed({ autoOpenLast: false });
+  check(await b2.p.$('#player-view.active') === null,
+    'G: autoOpenLast:false starts on the library instead');
+  check(await b2.p.$('.book-item') !== null, 'G: the library is rendered');
+  const kept = await b2.p.evaluate(() => localStorage.getItem('rs-last-book'));
+  check(kept === '0', 'G: opting out does not erase the stored position');
+  await b2.ctx.close();
 }
 
 await browser.close();

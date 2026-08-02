@@ -1243,7 +1243,12 @@ var RepoStoryPlayer = (function () {
     var hashIdx = hashMatch ? bookIdxFromSlug(decodeURIComponent(hashMatch[1])) : -1;
     if (hashIdx >= 0) {
       openBook(hashIdx, { updateUrl: false });
-    } else {
+    } else if (config.autoOpenLast !== false) {
+      // Resuming the last book is right on a cold load and wrong when a host
+      // has just navigated the reader to the library on purpose — they ask for
+      // the shelf and land straight back in the book. Hosts that route for
+      // themselves pass autoOpenLast:false; the stored position is left alone
+      // either way, so the next resume still works.
       var lastBook = localStorage.getItem('rs-last-book');
       if (lastBook !== null) {
         var idx = parseInt(lastBook, 10);

@@ -660,11 +660,14 @@ var RepoStoryPlayer = (function () {
         ? ((clientY - rect.top) / rect.height) * 100
         : ((clientX - rect.left) / rect.width) * 100;
       pct = Math.max(5, Math.min(95, pct));
-      // setProperty with 'important': the stacked layout sets the panel flex
-      // with !important (so a stale inline value from a desktop drag cannot
-      // survive a rotate), and only an inline !important outranks that.
+      // Only the chapter pane is sized; the transcript grows into whatever is
+      // left. Giving both a percentage looked symmetrical and was wrong — the
+      // pair summed to the container while the divider added its own size on
+      // top, so the panes overflowed by exactly the divider and the transcript
+      // lost its last lines off the bottom. Letting one side flex means the
+      // arithmetic cannot drift no matter what the divider or the clamp do.
       chapterPanel.style.setProperty('flex', '0 0 ' + pct + '%', 'important');
-      transcriptPanel.style.setProperty('flex', '0 0 ' + (100 - pct) + '%', 'important');
+      transcriptPanel.style.setProperty('flex', '1 1 0%', 'important');
     }
 
     divider.addEventListener('mousedown', function (e) {

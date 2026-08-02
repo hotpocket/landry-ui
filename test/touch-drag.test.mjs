@@ -19,6 +19,7 @@
 //   D. engaging is visible (a class lands on the element)
 //   E. releasing ends the drag
 //   F. mouse behaviour is unchanged — no long press required
+//   G. the panes always fill the container exactly, at any split
 import { createRequire } from 'module';
 import { readFileSync } from 'fs';
 import { createServer } from 'http';
@@ -183,6 +184,65 @@ const PHONE = { width: 390, height: 844 };
   await p.waitForTimeout(100);
   const after = await p.$eval('.chapter-panel', (e) => Math.round(e.getBoundingClientRect().width));
   check(after > before + 60, `F: mouse drag still resizes immediately (${before} -> ${after})`);
+  await p.close();
+}
+
+// --- G: no gap, no overflow, at any split ---
+//
+// Sizing both panes by percentage looked right and was not: the pair stopped
+// summing to the container once the divider's own height and the 5/95 clamp
+// were in play, leaving a dead band under the transcript that grew as you
+// dragged. Only the chapter pane is sized now; the transcript takes the rest.
+async function panelGeometry(p) {
+  return p.evaluate(() => {
+    const r = (s) => document.querySelector(s).getBoundingClientRect();
+    const area = r('.content-area'), ch = r('.chapter-panel');
+    const dv = r('.panel-divider'), tr = r('.transcript-panel');
+    const vertical = getComputedStyle(document.querySelector('.content-area'))
+      .flexDirection === 'column';
+    const size = (b) => (vertical ? b.height : b.width);
+    return {
+      area: Math.round(size(area)),
+      sum: Math.round(size(ch) + size(dv) + size(tr)),
+      gap: Math.round(size(area) - (size(ch) + size(dv) + size(tr))),
+    };
+  });
+}
+
+{
+  const p = await open(PHONE);
+  for (const dy of [140, 140, -220, 90]) {
+    await touchDrag(p, '.panel-divider', { holdMs: 450, dy });
+    await p.waitForTimeout(80);
+    const g = await panelGeometry(p);
+    check(Math.abs(g.gap) <= 1,
+      `G: panes fill the container after dragging ${dy > 0 ? '+' : ''}${dy} (gap ${g.gap}px of ${g.area})`);
+  }
+  await p.close();
+}
+
+{
+  // Same invariant on the horizontal axis, via the mouse.
+  const p = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  await p.goto(origin + '/index.html');
+  await p.waitForSelector('.book-item');
+  await p.click('.book-item .title');
+  await p.waitForSelector('#player-view.active');
+  await p.waitForTimeout(200);
+  for (const dx of [200, -350]) {
+    const box = await p.$eval('.panel-divider', (e) => {
+      const r = e.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    await p.mouse.move(box.x, box.y);
+    await p.mouse.down();
+    await p.mouse.move(box.x + dx, box.y, { steps: 8 });
+    await p.mouse.up();
+    await p.waitForTimeout(80);
+    const g = await panelGeometry(p);
+    check(Math.abs(g.gap) <= 1,
+      `G: panes fill the container after a ${dx > 0 ? '+' : ''}${dx} mouse drag (gap ${g.gap}px)`);
+  }
   await p.close();
 }
 

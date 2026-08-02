@@ -148,19 +148,41 @@ async function open(config) {
   pending = page({ books: withTranscript });
   const p = await browser.newPage({ viewport: { width: 900, height: 700 } });
   const asked = [];
+  // Fulfilled with real content and with no delay at all — that is the point.
+  // A warm cache resolves this fetch before openBook has wired its DOM refs,
+  // which used to drop the render silently and leave the pane blank.
   await p.route('**/t-*.json', (route) => {
+    const slug = route.request().url().split('/').pop().replace(/^t-|\.json$/g, '');
     asked.push(route.request().url().split('/').pop());
     route.fulfill({ status: 200, contentType: 'application/json',
-      body: JSON.stringify({ books: [] }) });
+      body: JSON.stringify({ books: [{ slug: slug, chapters: [{
+        index: 1, title: 'Chapter 1', timing: 'chunks',
+        chunks: [{ index: 0, text: 'First line.', start: 0, end: 5 },
+                 { index: 1, text: 'Second line.', start: 5, end: 10 }],
+      }] }] }) });
   });
   p.on('pageerror', (e) => bad(`page error: ${e.message}`));
   await p.goto(origin + '/index.html');
   await p.waitForSelector('#book-list', { timeout: 5000 });
   await p.click('.book-item .title');
   await p.waitForSelector('#player-view.active', { timeout: 5000 });
-  await p.waitForTimeout(300);
+  await p.waitForTimeout(500);
   check(asked.includes('t-alpha.json'),
     `E: opening Alpha fetches its own transcript (asked: ${asked.join(',') || 'nothing'})`);
+  const rendered = await p.$$eval('#transcript-chunks .transcript-chunk', (e) => e.length);
+  check(rendered === 2,
+    `E: an instantly-served transcript still renders (${rendered} chunks)`);
+
+  // F: reopening a book whose transcript is already loaded must repopulate.
+  // The fetch is skipped the second time, and renderTranscript() only clears,
+  // so the pane used to go blank until the reader changed chapters.
+  await p.click('#back-btn');
+  await p.waitForSelector('#library', { state: 'visible', timeout: 5000 });
+  await p.click('.book-item .title');
+  await p.waitForSelector('#player-view.active', { timeout: 5000 });
+  await p.waitForTimeout(400);
+  const reopened = await p.$$eval('#transcript-chunks .transcript-chunk', (e) => e.length);
+  check(reopened === 2, `F: reopening keeps the transcript (${reopened} chunks)`);
   await p.close();
 }
 

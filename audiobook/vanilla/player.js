@@ -888,15 +888,6 @@ var RepoStoryPlayer = (function () {
   function openBook(idx, opts) {
     currentBook = config.books[idx];
     currentBookIdx = idx;
-    // A multi-book site keeps each book's transcript beside its audio, so
-    // there is no single merged transcripts.json to preload. Fetch this
-    // book's own when it opens; a book without one keeps using the global
-    // config.transcriptUrl loaded at init.
-    if (currentBook && currentBook.transcriptUrl &&
-        loadedTranscriptUrl !== currentBook.transcriptUrl) {
-      loadedTranscriptUrl = currentBook.transcriptUrl;
-      loadTranscripts(currentBook.transcriptUrl);
-    }
     lastActiveChapterId = null;
     lastActiveChunkId = null;
     lastFormattedTime = '';
@@ -942,6 +933,23 @@ var RepoStoryPlayer = (function () {
     loadChapter(startIdx, startTimeInChapter, false);
 
     updatePlayer();
+
+    // Fetched last, deliberately. A multi-book site keeps each book's
+    // transcript beside its audio rather than in one merged file, so it can
+    // only be requested once we know which book opened. It has to come after
+    // the dom.* refs above: a warm cache resolves the fetch before those are
+    // set, and renderTranscriptChunks would then bail on a null container.
+    // A book with no transcriptUrl keeps using the global one loaded at init.
+    if (currentBook.transcriptUrl && loadedTranscriptUrl !== currentBook.transcriptUrl) {
+      loadedTranscriptUrl = currentBook.transcriptUrl;
+      loadTranscripts(currentBook.transcriptUrl);
+    } else {
+      // Already have the data — render now rather than waiting for the tick
+      // loop to notice a chapter change. renderTranscript() above only clears
+      // the pane, so reopening a book whose transcript was already loaded left
+      // it blank until the reader switched chapters.
+      renderTranscriptChunks(currentChapterIdx + 1);
+    }
   }
 
   function showLibrary(opts) {

@@ -38,6 +38,10 @@ var RepoStoryPlayer = (function () {
   var transcriptData = null;
   var pendingPlayAfterLoad = false;
   var loadGen = 0;  // monotonically-increasing id; lets us cancel stale loadedmetadata callbacks
+  var saveProgressTimer = null;   // re-init replaces it instead of stacking
+  var pageWired = false;          // document/window listeners are added once
+  var playerLoopRunning = false;  // one rAF loop, however many openBook calls
+  var urlWired = false;           // popstate handler is added once
 
   // Summary mode: swaps audio + transcript + time model onto the condensed
   // per-chapter summary tracks. Effective only for books that carry them.
@@ -186,10 +190,14 @@ var RepoStoryPlayer = (function () {
     var myGen = ++loadGen;
 
     var ch = currentBook.chapters[idx];
+    // Where to come back to if this load errors: the element itself is blank
+    // after a failed load, so recovery needs its own record of the target.
+    resumePos = { idx: idx, t: Math.max(0, timeInChapter || 0) };
     // Now, not on the next tick: the tick that relabels needs loaded audio,
     // and a chapter change the reader asked for must show immediately even if
     // the file is slow (or missing).
     setReadingChapterLabel(ch);
+    updateMediaSessionMetadata();
     audio.src = audioUrlFor(ch);
     audio.load();
 
@@ -652,7 +660,21 @@ var RepoStoryPlayer = (function () {
   }
 
   // --- Draggable panel divider ---
-  var dividerDragging = false;
+  //
+  // The document-level move/up listeners are wired once and act on whatever
+  // drag is current; wiring them per init() stacked a fresh pair — each
+  // closing over a dead container — on every host re-render.
+  var dividerDrag = null;   // { resize, divider } while a drag is live
+
+  document.addEventListener('mousemove', function (e) {
+    if (!dividerDrag) return;
+    dividerDrag.resize(e.clientX, e.clientY);
+  });
+  document.addEventListener('mouseup', function () {
+    if (!dividerDrag) return;
+    dividerDrag.divider.classList.remove('dragging');
+    dividerDrag = null;
+  });
 
   function initDivider() {
     var divider = config.container.querySelector('.panel-divider');
@@ -683,27 +705,18 @@ var RepoStoryPlayer = (function () {
 
     divider.addEventListener('mousedown', function (e) {
       e.preventDefault();
-      dividerDragging = true;
+      dividerDrag = { resize: resizePanels, divider: divider };
       divider.classList.add('dragging');
-    });
-    document.addEventListener('mousemove', function (e) {
-      if (!dividerDragging) return;
-      resizePanels(e.clientX, e.clientY);
-    });
-    document.addEventListener('mouseup', function () {
-      if (!dividerDragging) return;
-      dividerDragging = false;
-      divider.classList.remove('dragging');
     });
 
     longPressDrag(divider, {
       start: function () {
-        dividerDragging = true;
+        dividerDrag = { resize: resizePanels, divider: divider };
         divider.classList.add('dragging');
       },
       move: function (t) { resizePanels(t.clientX, t.clientY); },
       end: function () {
-        dividerDragging = false;
+        dividerDrag = null;
         divider.classList.remove('dragging');
       },
     });
@@ -778,9 +791,13 @@ var RepoStoryPlayer = (function () {
     box.scrollTop += (er.top - br.top) - box.clientHeight / 3;
   }
 
-  function setFollow(on, snap) {
+  // persist !== false writes the choice to localStorage. Gesture paths pass
+  // false: a stray swipe should disarm following for this session, not disable
+  // it forever on every future visit — that read as "transcripts stopped
+  // following" with no way to see why.
+  function setFollow(on, snap, persist) {
     followTranscript = on;
-    localStorage.setItem('rs-follow', on ? '1' : '0');
+    if (persist !== false) localStorage.setItem('rs-follow', on ? '1' : '0');
     var btn = config.container && config.container.querySelector('#follow-btn');
     if (btn) btn.classList.toggle('on', on);
     if (on && snap !== false) scrollToActiveChunk();
@@ -869,6 +886,14 @@ var RepoStoryPlayer = (function () {
   var lastTickTime = 0;
   var lastTickChapterId = null;
   var scenePauseTimer = null;
+  // True while the hold owns the pause: the 'pause' listener must not read a
+  // scene hold as the listener asking for silence, or an error inside the 2s
+  // window recovers into a paused player and the book silently ends there.
+  var scenePauseHolding = false;
+
+  function scenePauseMs() {
+    return config.scenePauseMs || SCENE_PAUSE_MS;
+  }
 
   function isSceneBreakChunk(chunk) {
     if (!chunk) return false;
@@ -879,6 +904,7 @@ var RepoStoryPlayer = (function () {
 
   function cancelScenePause() {
     if (scenePauseTimer !== null) { clearTimeout(scenePauseTimer); scenePauseTimer = null; }
+    scenePauseHolding = false;
   }
 
   // Called each frame: if normal playback just crossed a scene-break marker,
@@ -894,17 +920,149 @@ var RepoStoryPlayer = (function () {
     var bt = getBookTranscript();
     var ct = bt && bt.chapters.find(function (c) { return c.index === ch.id + 1; });
     if (!ct) return;
-    for (var i = 0; i < ct.chunks.length; i++) {
-      var c = ct.chunks[i];
+    // The active mode's chunk list: full-track chunk times mean nothing on the
+    // summary clock, and reading them there paused playback at random points.
+    var chunks = chunksFor(ct);
+    for (var i = 0; i < chunks.length; i++) {
+      var c = chunks[i];
       if (isSceneBreakChunk(c) && c.start > lt && c.start <= t) {
+        scenePauseHolding = true;
         audio.pause();
         scenePauseTimer = setTimeout(function () {
           scenePauseTimer = null;
+          scenePauseHolding = false;
           if (currentBook && audio.paused) audio.play().catch(function () {});
-        }, SCENE_PAUSE_MS);
+        }, scenePauseMs());
         return;
       }
     }
+  }
+
+  // --- Recovery, MediaSession, prefetch ---
+  //
+  // The audio element gets one chapter at a time, so every chapter boundary is
+  // a fresh network fetch — usually with the screen off, sometimes with lapsed
+  // entitlement cookies. A failed fetch used to stop the book silently, with
+  // nothing listening for the error and nothing retrying.
+
+  // Where playback should resume after an error: kept current from timeupdate
+  // (mid-chapter failures) and from loadChapter (boundary failures, where the
+  // element never had a position to read back).
+  var resumePos = { idx: 0, t: 0 };
+  // Whether the listener wants sound. audio.paused is unreliable around an
+  // error, and pendingPlayAfterLoad is consumed on success — this survives both.
+  var playIntent = false;
+
+  var RETRY_MAX = 3;
+  var RETRY_DELAYS_MS = [800, 2500, 8000];
+  var retryCount = 0;
+  var retryTimer = null;
+  var retryPending = false;  // set synchronously — the async refresh below
+                             // opens a window two error events could both enter
+  var retryGen = 0;          // resetRetries orphans any chain still in flight
+
+  function resetRetries() {
+    retryCount = 0;
+    retryGen++;
+    retryPending = false;
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  }
+
+  function handleAudioError() {
+    if (!currentBook || retryPending) return;
+    if (retryCount >= RETRY_MAX) return;   // capped: no infinite spin offline
+    retryPending = true;
+    var myGen = retryGen;
+    var delay = RETRY_DELAYS_MS[retryCount] || 8000;
+    retryCount++;
+    // Give the host a chance to repair entitlement first (refresh signed
+    // cookies, re-auth) — that is the common cause on a private library.
+    var refreshed = config.onAuthRefresh
+      ? Promise.resolve().then(config.onAuthRefresh).catch(function () {})
+      : Promise.resolve();
+    refreshed.then(function () {
+      if (myGen !== retryGen) return;      // superseded while refreshing
+      retryTimer = setTimeout(function () {
+        retryTimer = null;
+        retryPending = false;
+        if (myGen !== retryGen || !currentBook) return;
+        // Only a still-errored element gets reloaded: if playback recovered
+        // (or the reader loaded something else) this timer is stale and a
+        // reload would audibly yank them backwards.
+        if (!audio.error) return;
+        loadChapter(resumePos.idx, resumePos.t, playIntent);
+      }, delay);
+    });
+  }
+
+  function updateMediaSessionMetadata() {
+    if (!('mediaSession' in navigator) || !currentBook) return;
+    var ch = currentBook.chapters[currentChapterIdx];
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: (ch && ch.title) || currentBook.title,
+        artist: currentBook.artist || '',
+        album: currentBook.title || '',
+      });
+    } catch (e) {}
+  }
+
+  function updatePositionState() {
+    if (!('mediaSession' in navigator) || !navigator.mediaSession.setPositionState) return;
+    var ch = getCurrentChapter();
+    if (!ch) return;
+    var dur = chDur(ch) || 0;
+    try {
+      navigator.mediaSession.setPositionState({
+        duration: dur,
+        playbackRate: audio.playbackRate || 1,
+        position: Math.max(0, Math.min(audio.currentTime || 0, dur)),
+      });
+    } catch (e) {}
+  }
+
+  function wireMediaSession() {
+    if (!('mediaSession' in navigator)) return;
+    var set = function (action, handler) {
+      try { navigator.mediaSession.setActionHandler(action, handler); } catch (e) {}
+    };
+    set('play', function () { audio.play().catch(function () {}); });
+    set('pause', function () { cancelScenePause(); audio.pause(); });
+    set('previoustrack', prevChapter);
+    set('nexttrack', nextChapter);
+    set('seekbackward', function (d) { skip(-((d && d.seekOffset) || 30)); });
+    set('seekforward', function (d) { skip(((d && d.seekOffset) || 30)); });
+    set('seekto', function (d) {
+      if (!d || d.seekTime == null) return;
+      try { audio.currentTime = d.seekTime; } catch (e) {}
+      updatePositionState();
+    });
+  }
+
+  // Fetch the next chapter while this one still plays. The service worker (or
+  // the immutable HTTP cache) keeps the bytes, so the chapter boundary needs
+  // no network at exactly the moment the page is inaudible and easiest for a
+  // phone to suspend.
+  var PREFETCH_LEAD_S = 45;
+  var prefetchedKey = null;
+
+  function maybePrefetchNext() {
+    if (!currentBook || audio.paused) return;
+    var ch = currentBook.chapters[currentChapterIdx];
+    var nextIdx = currentChapterIdx + 1;
+    if (!ch || nextIdx >= currentBook.chapters.length) return;
+    if (chDur(ch) - (audio.currentTime || 0) > PREFETCH_LEAD_S) return;
+    var key = currentBookIdx + ':' + nextIdx + ':' + (summaryMode ? 's' : 'f');
+    if (prefetchedKey === key) return;
+    prefetchedKey = key;
+    try {
+      // The body is drained on purpose: an unread Response can be aborted on
+      // GC, and without a service worker it is the HTTP cache (fed by the
+      // completed transfer) that makes the boundary instant.
+      fetch(audioUrlFor(currentBook.chapters[nextIdx]))
+        .then(function (r) { return r.ok ? r.arrayBuffer() : null; })
+        .catch(function () {});
+    } catch (e) {}
   }
 
   function updatePlayer() {
@@ -1046,7 +1204,12 @@ var RepoStoryPlayer = (function () {
     var startTimeInChapter = bt - chStart(currentBook.chapters[startIdx]);
     loadChapter(startIdx, startTimeInChapter, false);
 
-    updatePlayer();
+    // Guarded: openBook runs per book (and per host re-render), and each
+    // unguarded call here would stack another rAF loop forever.
+    if (!playerLoopRunning) {
+      playerLoopRunning = true;
+      updatePlayer();
+    }
 
     // Fetched last, deliberately. A multi-book site keeps each book's
     // transcript beside its audio rather than in one merged file, so it can
@@ -1091,7 +1254,16 @@ var RepoStoryPlayer = (function () {
     if (currentBook !== null) showLibrary({ updateUrl: false });
   }
 
-  function togglePlay() { audio.paused ? audio.play() : audio.pause(); }
+  function togglePlay() {
+    if (audio.paused) {
+      audio.play();
+    } else {
+      // An explicit pause must stick: the scene-hold resume timer would
+      // otherwise fire moments later and override the user.
+      cancelScenePause();
+      audio.pause();
+    }
+  }
   function skip(s) { seekToBookTime(bookTime() + s, !audio.paused); }
 
   function prevChapter() {
@@ -1134,12 +1306,14 @@ var RepoStoryPlayer = (function () {
   function trackDragMove(e) {
     if (!trackDrag) return;
     var pct = trackPct(e);
-    var bt = pct * (currentBook.duration || 0);
+    // The active clock: in summary mode the bar spans the summary timeline,
+    // and full-clock arithmetic here seeked past the end of it.
+    var bt = pct * bookDuration();
     dom.progress.style.width = (pct * 100) + '%';
     dom.currentTime.textContent = formatTime(bt);
     var idx = findChapterIdxAt(bt);
     if (idx === currentChapterIdx) {
-      try { audio.currentTime = bt - currentBook.chapters[idx].start; } catch (err) {}
+      try { audio.currentTime = bt - chStart(currentBook.chapters[idx]); } catch (err) {}
     }
   }
 
@@ -1148,7 +1322,7 @@ var RepoStoryPlayer = (function () {
     var wasPlaying = trackDrag.wasPlaying;
     trackDrag = null;
     dom.trackBar.classList.remove('dragging');
-    seekToBookTime(trackPct(e) * (currentBook.duration || 0), wasPlaying);
+    seekToBookTime(trackPct(e) * bookDuration(), wasPlaying);
   }
 
   function cycleSpeed() {
@@ -1322,8 +1496,10 @@ var RepoStoryPlayer = (function () {
     config.container.querySelector('#chapter-list').addEventListener('wheel', function () {
       userScrolledChapters = true;
     });
+    // Gesture disarms are session-only (persist:false): a scroll is a glance
+    // away, not a setting.
     config.container.querySelector('#transcript-chunks').addEventListener('wheel', function () {
-      if (followTranscript) setFollow(false);
+      if (followTranscript) setFollow(false, undefined, false);
     });
     config.container.querySelector('#chapter-list').addEventListener('pointerdown', function (e) {
       var rect = e.currentTarget.getBoundingClientRect();
@@ -1331,24 +1507,87 @@ var RepoStoryPlayer = (function () {
     });
     config.container.querySelector('#transcript-chunks').addEventListener('pointerdown', function (e) {
       var rect = e.currentTarget.getBoundingClientRect();
-      if (e.clientX > rect.right - 20 && followTranscript) setFollow(false);
+      if (e.clientX > rect.right - 20 && followTranscript) setFollow(false, undefined, false);
     });
 
     config.container.querySelector('#chapter-list').addEventListener('touchmove', function () {
       userScrolledChapters = true;
     });
-    config.container.querySelector('#transcript-chunks').addEventListener('touchmove', function () {
-      if (followTranscript) setFollow(false);
-    });
-
-    document.addEventListener('mousemove', handleScrubMove);
-    document.addEventListener('mouseup', handleScrubEnd);
+    // Slop before a touch disarms follow: a tap always wobbles a few pixels,
+    // and treating every wobble as a scroll turned following off constantly.
+    (function () {
+      var pane = config.container.querySelector('#transcript-chunks');
+      var FOLLOW_SLOP_PX = 10;
+      var sx = 0, sy = 0;
+      pane.addEventListener('touchstart', function (e) {
+        if (!e.touches.length) return;
+        sx = e.touches[0].clientX;
+        sy = e.touches[0].clientY;
+      }, { passive: true });
+      pane.addEventListener('touchmove', function (e) {
+        if (!followTranscript || !e.touches.length) return;
+        var t = e.touches[0];
+        if (Math.abs(t.clientX - sx) > FOLLOW_SLOP_PX ||
+            Math.abs(t.clientY - sy) > FOLLOW_SLOP_PX) {
+          setFollow(false, undefined, false);
+        }
+      }, { passive: true });
+    })();
 
     initDivider();
 
-    window.addEventListener('beforeunload', saveProgress);
-    setInterval(saveProgress, 5000);
     audio.addEventListener('ended', onChapterEnded);
+    audio.addEventListener('error', handleAudioError);
+    audio.addEventListener('playing', function () { resetRetries(); });
+    audio.addEventListener('play', function () { playIntent = true; });
+    audio.addEventListener('pause', function () {
+      // Not on error, chapter end, or a scene hold: all three fire 'pause'
+      // without the listener asking for silence, and recovery/advance must
+      // keep playing through.
+      if (!audio.error && !audio.ended && !scenePauseHolding) playIntent = false;
+    });
+    var lastPositionStateAt = 0;
+    audio.addEventListener('timeupdate', function () {
+      if (!audio.error && (audio.currentTime || 0) > 0) {
+        resumePos = { idx: currentChapterIdx, t: audio.currentTime };
+      }
+      maybePrefetchNext();
+      // Keep the lock-screen scrubber moving, at ~1Hz rather than per event.
+      var now = Date.now();
+      if (now - lastPositionStateAt > 1000) {
+        lastPositionStateAt = now;
+        updatePositionState();
+      }
+    });
+    audio.addEventListener('loadedmetadata', updatePositionState);
+    audio.addEventListener('seeked', updatePositionState);
+    audio.addEventListener('ratechange', updatePositionState);
+    wireMediaSession();
+
+    // Host re-inits replace the container (and the audio element with it), but
+    // page-level wiring must happen exactly once or every re-render stacks
+    // another interval and another set of document listeners.
+    if (saveProgressTimer) clearInterval(saveProgressTimer);
+    saveProgressTimer = setInterval(saveProgress, 5000);
+    if (!pageWired) {
+      pageWired = true;
+      document.addEventListener('mousemove', handleScrubMove);
+      document.addEventListener('mouseup', handleScrubEnd);
+      window.addEventListener('beforeunload', saveProgress);
+      // beforeunload does not fire on mobile tab discard; pagehide does.
+      window.addEventListener('pagehide', saveProgress);
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'hidden') {
+          saveProgress();
+        } else if (currentBook && audio && audio.error) {
+          // Coming back to a dead element: retry immediately with a fresh
+          // cap — whatever starved it (frozen page, lapsed cookies) has had
+          // its chance to clear.
+          resetRetries();
+          handleAudioError();
+        }
+      });
+    }
 
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js').catch(function () {});
@@ -1356,7 +1595,10 @@ var RepoStoryPlayer = (function () {
 
     renderLibrary();
 
-    window.addEventListener('popstate', applyUrlState);
+    if (!urlWired) {
+      urlWired = true;
+      window.addEventListener('popstate', applyUrlState);
+    }
 
     var hashMatch = window.location.hash.match(/^#\/(.+)$/);
     var hashIdx = hashMatch ? bookIdxFromSlug(decodeURIComponent(hashMatch[1])) : -1;

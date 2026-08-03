@@ -20,7 +20,19 @@
 var SHELL_VERSION = 'dev';
 
 var CACHE_NAME = 'audiobook-shell-' + SHELL_VERSION;
+// Two audio caches with different owners:
+//   AUDIO_CACHE  — explicit offline downloads (the page writes it; never
+//                  evicted here, because "Downloaded ✓" is a promise).
+//   STREAM_CACHE — chapters cached as a side effect of listening. Bounded:
+//                  a 1,000-chapter book listened straight through must not
+//                  silently swallow gigabytes and get the whole origin's
+//                  storage (localStorage progress included) evicted by quota.
 var AUDIO_CACHE = 'audiobook-audio';
+var STREAM_CACHE = 'audiobook-stream';
+var STREAM_MAX_ENTRIES = 20;
+// FIFO order lives in the cache itself (a synthetic entry), not in worker
+// memory — the worker is killed and restarted constantly.
+var STREAM_INDEX_URL = '/__audiobook-stream-index__';
 
 // Versioned so a rebuilt transcript is refetched rather than served from the
 // previous build's cache entry. Kept unversioned in dev so local edits show up
@@ -69,7 +81,7 @@ self.addEventListener('activate', function (e) {
     Promise.all([
       caches.keys().then(function (names) {
         return Promise.all(names.filter(function (name) {
-          return name !== CACHE_NAME && name !== AUDIO_CACHE;
+          return name !== CACHE_NAME && name !== AUDIO_CACHE && name !== STREAM_CACHE;
         }).map(function (name) { return caches.delete(name); }));
       }),
       // Evict legacy single-file M4B from audio cache (one-time cleanup).
@@ -138,28 +150,128 @@ function fullRequest(req) {
   });
 }
 
+// Record a freshly-streamed chapter and evict the oldest past the cap.
+//
+// The index is read-modify-write, and the player prefetches the next chapter
+// while the current one is still filling the cache — two writers ARE
+// concurrent, so every update runs on one serial chain. The chain lives in
+// worker memory (a killed worker just starts a fresh, empty chain; the index
+// itself is in the cache), and each pass also reconciles the index against
+// the cache's real keys, so an entry orphaned by a worker death mid-write is
+// swept up on the next one rather than pinned forever.
+var indexChain = Promise.resolve();
+
+function recordStreamEntry(cache, urlHref) {
+  indexChain = indexChain.then(function () {
+    var indexReq = new Request(STREAM_INDEX_URL);
+    return Promise.all([
+      cache.match(indexReq).then(function (r) {
+        return r ? r.json().catch(function () { return []; }) : [];
+      }),
+      cache.keys(),
+    ]).then(function (got) {
+      var order = got[0];
+      var real = {};
+      got[1].forEach(function (req) {
+        var path = new URL(req.url).pathname;
+        if (path !== STREAM_INDEX_URL) real[req.url] = true;
+      });
+      if (urlHref) {
+        order = order.filter(function (u) { return u !== urlHref; });
+        order.push(urlHref);
+      }
+      // Reconcile both ways: index entries whose object vanished are dropped;
+      // cached objects the index never heard of join the front (oldest end),
+      // first in line for eviction.
+      var known = {};
+      order = order.filter(function (u) { known[u] = true; return real[u]; });
+      var strays = Object.keys(real).filter(function (u) { return !known[u]; });
+      order = strays.concat(order);
+      var evict = order.slice(0, Math.max(0, order.length - STREAM_MAX_ENTRIES));
+      order = order.slice(evict.length);
+      return Promise.all(evict.map(function (u) {
+        return cache.delete(new Request(u));
+      })).then(function () {
+        return cache.put(indexReq, new Response(JSON.stringify(order),
+          { headers: { 'Content-Type': 'application/json' } }));
+      });
+    });
+  }).catch(function () {});
+  return indexChain;
+}
+
+function audioResponse(e) {
+  var keyReq = new Request(e.request.url);
+  return Promise.all([caches.open(AUDIO_CACHE), caches.open(STREAM_CACHE)])
+    .then(function (opened) {
+      var offline = opened[0], stream = opened[1];
+      return offline.match(keyReq).then(function (r) {
+        return r || stream.match(keyReq);
+      }).then(function (cached) {
+        if (cached) return serveRange(e.request, cached);
+
+        var rangeHeader = e.request.headers.get('Range') || '';
+        var range = rangeHeader.match(/bytes=(\d*)-/);
+        // A suffix range (bytes=-N, Safari probing for the moov atom) has an
+        // empty first group; it must pass through like a mid-file seek, not
+        // fall into the whole-file branch.
+        var start = range && range[1] !== '' ? parseInt(range[1], 10) : (range ? null : 0);
+        if (start !== 0) {
+          // A mid-file seek into an uncached chapter: pass it straight
+          // through. Buffering the whole file first would stall the seek,
+          // and a 206 must not be cached as if it were the full body.
+          return fetch(e.request);
+        }
+
+        // First request for the chapter. Return the network response AS A
+        // STREAM — the old blob() here buffered the entire file before the
+        // element saw byte one, a window of enforced silence in which a
+        // phone with its screen off is free to suspend the page (the win is
+        // time-to-first-byte; the cache branch of the tee still holds the
+        // body). The cache copy fills in the background; a put that fails
+        // (quota) triggers an eviction pass so the cache heals rather than
+        // silently dying full.
+        return fetch(fullRequest(e.request)).then(function (response) {
+          if (!response || response.status !== 200) return response;  // errors are never cached
+          var copy = response.clone();
+          e.waitUntil(
+            stream.put(keyReq, copy).then(function () {
+              return recordStreamEntry(stream, keyReq.url);
+            }).catch(function () {
+              return recordStreamEntry(stream, null);  // reconcile + evict
+            })
+          );
+          // The element asked for a range; strict UAs (iOS Safari) may not
+          // accept a 200 in its place. With the length known we can answer
+          // 206 and still stream the same body.
+          var len = response.headers.get('Content-Length');
+          if (rangeHeader && len) {
+            return new Response(response.body, {
+              status: 206,
+              statusText: 'Partial Content',
+              headers: {
+                'Content-Type': response.headers.get('Content-Type') || 'audio/mp4',
+                'Content-Range': 'bytes 0-' + (parseInt(len, 10) - 1) + '/' + len,
+                'Content-Length': len,
+                'Accept-Ranges': 'bytes'
+              }
+            });
+          }
+          return response;
+        });
+      });
+    });
+}
+
 self.addEventListener('fetch', function (e) {
   var url = new URL(e.request.url);
 
-  if (url.pathname.match(/\.(m4a|mp3|ogg|m4b)$/)) {
-    e.respondWith(
-      caches.open(AUDIO_CACHE).then(function (cache) {
-        // Cache key is the URL without the Range header.
-        var keyReq = new Request(e.request.url);
-        return cache.match(keyReq).then(function (cached) {
-          if (cached) return serveRange(e.request, cached);
+  // The API is authoritative and cookie-bearing: never cached, never served
+  // stale, never satisfied from here at all.
+  if (url.pathname.indexOf('/api/') === 0) return;
 
-          // Not cached: fetch the FULL file (no Range), cache as 200, then
-          // serve the requested range from it. This makes the cache entry
-          // always a complete 200 response.
-          return fetch(fullRequest(e.request)).then(function (response) {
-            if (!response || !response.ok || response.status !== 200) return response;
-            cache.put(keyReq, response.clone()).catch(function () {});
-            return serveRange(e.request, response);
-          });
-        });
-      })
-    );
+  if (url.pathname.match(/\.(m4a|mp3|ogg|m4b)$/)) {
+    e.respondWith(audioResponse(e));
     return;
   }
 
@@ -167,6 +279,10 @@ self.addEventListener('fetch', function (e) {
   var requestUrl = e.request.url;
   e.respondWith(
     fetch(e.request).then(function (response) {
+      // Only a good response replaces the cached copy: caching a 403/404/500
+      // here poisoned the shell cache — a transient auth lapse left a private
+      // book's transcript permanently "empty" until the cache was cleared.
+      if (!response.ok) return response;
       return caches.open(CACHE_NAME).then(function (cache) {
         cache.put(requestUrl, response.clone());
         return response;

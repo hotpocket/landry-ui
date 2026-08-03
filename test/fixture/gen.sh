@@ -38,9 +38,15 @@ def sum_chunks(count, dur, tag):
              "start": round(i * dur, 3), "end": round((i + 1) * dur, 3)}
             for i in range(count)]
 
+ch1_chunks = chunks(40, 0.7)
+# A scene-break divider in the FULL chunks only (summary_chunks carry none):
+# scene detection must read the active mode's chunk list, and this asymmetry is
+# what lets a test catch it reading the wrong one.
+ch1_chunks[2]["text"] = "* * *"
+
 transcripts = {"books": [
     {"slug": "test-book", "chapters": [
-        {"index": 1, "title": "One", "chunks": chunks(40, 0.7),
+        {"index": 1, "title": "One", "chunks": ch1_chunks,
          "summary_chunks": sum_chunks(4, 1.5, "one")},
         {"index": 2, "title": "Two", "chunks": chunks(10, 0.7),
          "summary_chunks": sum_chunks(4, 1.5, "two")},

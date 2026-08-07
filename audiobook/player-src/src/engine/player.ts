@@ -31,6 +31,7 @@ import {
 } from '../core/playback-policy.ts';
 import { longPressDrag, resizePanels, markProgrammaticScroll, exceededSlop } from './gestures.ts';
 import { TranscriptLoader, wireSearch } from './search-ui.ts';
+import { isRecent } from '../core/recency.ts';
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
 const TS_RATIO = 1.25;
@@ -587,6 +588,19 @@ export class PlayerEngine {
       durSpan.className = 'ch-duration';
       durSpan.textContent = formatTime(dur);
       li.append(titleSpan, durSpan);
+
+      // wbt lands chapters a couple at a time on an hourly sync, so "what
+      // arrived since I last looked" is the most useful thing this list can
+      // say. Absent for books with no date_added — which is every book
+      // published before chatterbook recorded one, and they must not all light
+      // up at once.
+      if (isRecent((ch as { date_added?: string }).date_added)) {
+        const badge = document.createElement('span');
+        badge.className = 'ch-new';
+        badge.textContent = 'new';
+        badge.title = `Added ${(ch as { date_added?: string }).date_added}`;
+        li.insertBefore(badge, durSpan);
+      }
 
       const beginScrub = () => {
         this.didDrag = false;

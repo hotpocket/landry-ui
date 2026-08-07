@@ -437,3 +437,21 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .search-hit-text { flex: 1; }
 .search-hit mark { background: rgba(74, 158, 255, 0.25); color: inherit; border-radius: 2px; }
 .search-more, .search-empty { color: #666; font-size: 0.8rem; padding: 0.5rem 0.25rem; }
+
+/* "new" badge — chapters that arrived recently. Absent entirely for books with
+   no date_added, so a library published before the field existed looks exactly
+   as it did rather than lighting up wholesale. */
+.chapter-list li .ch-new {
+  flex-shrink: 0;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.3rem;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #0b0b0b;
+  background: #4a9eff;
+  border-radius: 3px;
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+}

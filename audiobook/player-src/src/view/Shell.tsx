@@ -26,6 +26,8 @@ export interface ShellRefs {
   library: RefObject<HTMLDivElement>;
   bookList: RefObject<HTMLDivElement>;
   playerView: RefObject<HTMLDivElement>;
+  readingProgress: RefObject<HTMLDivElement>;
+  readingProgressFill: RefObject<HTMLDivElement>;
   backBtn: RefObject<HTMLButtonElement>;
   nowPlaying: RefObject<HTMLDivElement>;
   bookTitle: RefObject<HTMLDivElement>;
@@ -67,6 +69,14 @@ export function Shell({ title, hideBackButton, hideNowPlaying, refs }: ShellProp
         <div class="book-list" id="book-list" ref={refs.bookList} />
       </div>
       <div class="player-view" id="player-view" ref={refs.playerView}>
+        {/* Reading mode hides the transport, the track bar and the chapter
+            list, and every indication of position goes with them. This says
+            how far through the CURRENT CHAPTER playback is — the unit a reader
+            is actually in — without giving the chrome back. Hidden by CSS
+            outside reading mode. */}
+        <div class="reading-progress" id="reading-progress" ref={refs.readingProgress}>
+          <div class="reading-progress-fill" id="reading-progress-fill" ref={refs.readingProgressFill} />
+        </div>
         <button
           class="back-btn"
           id="back-btn"

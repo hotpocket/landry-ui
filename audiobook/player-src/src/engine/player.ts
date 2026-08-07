@@ -729,6 +729,11 @@ export class PlayerEngine {
 
     const pct = Math.max(0, Math.min(100, ((this.audio.currentTime || 0) / this.chDur(ch)) * 100));
     if (this.chapterProgs[ch.id]) this.chapterProgs[ch.id].style.width = `${pct}%`;
+    // Same number, second consumer: the reading-mode hairline. Painted here
+    // rather than in its own pass so it can never disagree with the chapter
+    // list about where playback is.
+    const rp = this.refs.readingProgressFill.current;
+    if (rp) rp.style.width = `${pct}%`;
     if (this.chapterScrubs[ch.id]) this.chapterScrubs[ch.id].style.left = `calc(${pct}% - 6px)`;
 
     if (!this.userScrolledChapters) {

@@ -33,16 +33,20 @@ const result = await build({
 // Assets that are not compiled and must not drift: the service worker is
 // framework-agnostic and ships byte-identical, which is what makes the iOS
 // streamed-206 path unable to regress across this port.
-// player.css is copied rather than forked while the port is at parity. It moves
-// into src/ the moment it has to change (the reading-mode progress line is the
-// first thing that will).
-for (const f of ['sw.js', 'manifest.webmanifest', 'feedback.js', 'player.css']) {
+// sw.js is copied, not forked, and byte-identity is asserted by
+// test/vanilla-retirement.test.mjs — that is what keeps the iOS streamed-206
+// path unable to regress across this port.
+for (const f of ['sw.js', 'manifest.webmanifest', 'feedback.js']) {
   const src = join(VANILLA, f);
   if (existsSync(src)) copyFileSync(src, join(OUT, f));
 }
 if (existsSync(join(VANILLA, 'icons'))) {
   cpSync(join(VANILLA, 'icons'), join(OUT, 'icons'), { recursive: true });
 }
+
+// player.css IS forked: it diverges from vanilla's from the reading-mode
+// progress line onwards.
+copyFileSync(join(here, 'src', 'player.css'), join(OUT, 'player.css'));
 
 const bytes = readFileSync(join(OUT, 'player.js')).length;
 const gz = (await import('node:zlib')).gzipSync(readFileSync(join(OUT, 'player.js')), { level: 9 }).length;

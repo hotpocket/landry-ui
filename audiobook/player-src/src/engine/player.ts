@@ -30,6 +30,7 @@ import {
   shouldRetry, retryDelayMs, prefetchKey, shouldPrefetch,
 } from '../core/playback-policy.ts';
 import { longPressDrag, resizePanels, markProgrammaticScroll, exceededSlop } from './gestures.ts';
+import { TranscriptLoader, wireSearch } from './search-ui.ts';
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
 const TS_RATIO = 1.25;
@@ -75,6 +76,10 @@ export class PlayerEngine {
   private currentChapterIdx = 0;
 
   private transcriptData: TranscriptData | null = null;
+  /** slug → transcript, shared between playback and search so a transcript is
+   *  never fetched twice or held in two shapes. */
+  private transcriptsBySlug: Record<string, import('../core/transcript.ts').BookTranscript | undefined> = {};
+  private loader: TranscriptLoader | null = null;
   private loadedTranscriptUrl: string | null = null;
 
   private speedIdx = 1;
@@ -945,6 +950,7 @@ export class PlayerEngine {
       .then((r) => r.json())
       .then((data: TranscriptData) => {
         this.transcriptData = data;
+        for (const b of data?.books ?? []) this.transcriptsBySlug[b.slug] = b;
         // The data often arrives after the first chapter has rendered; the tick
         // loop has already marked it active and will not re-render it, so the
         // transcript would stay blank until the reader switched chapters.
@@ -1003,6 +1009,7 @@ export class PlayerEngine {
 
     this.renderLibrary();
     void this.refreshOfflineBadges();
+    this.wireSearchUi();
 
     if (!urlWired) {
       urlWired = true;
@@ -1020,6 +1027,50 @@ export class PlayerEngine {
       const last = readLastBook(this.store);
       if (last !== null && last < this.books.length) this.openBook(last);
     }
+  }
+
+  private wireSearchUi(): void {
+    const input = this.refs.searchInput.current;
+    const results = this.refs.searchResults.current;
+    const spinner = this.refs.searchSpinner.current;
+    const bookList = this.refs.bookList.current;
+    if (!input || !results || !spinner || !bookList) return;
+
+    this.loader = new TranscriptLoader({
+      urlFor: (slug) => {
+        const b = this.books.find((x) => bookSlug(x) === slug || x.slug === slug) as
+          { transcriptUrl?: string } | undefined;
+        // A per-book URL when the host provides one, else the single library
+        // transcript — which, once fetched, satisfies every book at once.
+        return b?.transcriptUrl ?? this.opts.transcriptUrl;
+      },
+      loaded: this.transcriptsBySlug,
+    }, () => { /* replaced by wireSearch */ });
+
+    wireSearch({
+      input,
+      results,
+      spinner,
+      bookList,
+      books: this.books as { slug?: string; title?: string }[],
+      loaded: this.transcriptsBySlug,
+      summaryFor: () => {
+        // Only the open book has a mode; the rest are searched as full text,
+        // which is what a reader coming to them fresh would see.
+        const map: Record<string, boolean> = {};
+        if (this.currentBook) map[bookSlug(this.currentBook)] = this.summaryMode;
+        return map;
+      },
+      loader: this.loader,
+      formatTime,
+      goTo: (slug, chapterIndex, start) => {
+        const idx = bookIdxFromSlug(this.books, slug);
+        if (idx < 0) return;
+        if (idx !== this.currentBookIdx) this.openBook(idx);
+        // Audio is only touched HERE — search itself never fetches a chapter.
+        this.loadChapter(chapterIndex - 1, start, false);
+      },
+    });
   }
 
   /** Public so the visibility handler can reach it through activeEngine. */

@@ -42,7 +42,7 @@ export interface PlayerOptions {
 
 function makeRefs(): ShellRefs {
   const keys = [
-    'library', 'bookList', 'playerView', 'readingProgress', 'readingProgressFill', 'backBtn', 'nowPlaying', 'bookTitle',
+    'library', 'bookList', 'searchInput', 'searchResults', 'searchSpinner', 'playerView', 'readingProgress', 'readingProgressFill', 'backBtn', 'nowPlaying', 'bookTitle',
     'chapterTitle', 'chapterList', 'divider', 'contentArea', 'chapterPanel',
     'transcriptPanel', 'readingChapter', 'modeToggle', 'modeFull', 'modeSummary',
     'miniPrev', 'miniPlay', 'miniNext', 'tsDec', 'tsInc', 'followBtn',

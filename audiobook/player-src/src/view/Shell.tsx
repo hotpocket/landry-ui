@@ -25,6 +25,9 @@ export interface ShellProps {
 export interface ShellRefs {
   library: RefObject<HTMLDivElement>;
   bookList: RefObject<HTMLDivElement>;
+  searchInput: RefObject<HTMLInputElement>;
+  searchResults: RefObject<HTMLDivElement>;
+  searchSpinner: RefObject<HTMLSpanElement>;
   playerView: RefObject<HTMLDivElement>;
   readingProgress: RefObject<HTMLDivElement>;
   readingProgressFill: RefObject<HTMLDivElement>;
@@ -65,7 +68,29 @@ export function Shell({ title, hideBackButton, hideNowPlaying, refs }: ShellProp
   return (
     <>
       <div class="library" id="library" ref={refs.library}>
-        <h1>{title}</h1>
+        <div class="library-head">
+          <h1>{title}</h1>
+          {/* The spinner is a 6px pip, not a modal or a bar: loading a
+              transcript is background work that must not imply the library is
+              unusable. Its title says what is loading, so a hover or a tap
+              explains it without spending any layout on the explanation. */}
+          <span
+            class="search-spinner"
+            id="search-spinner"
+            ref={refs.searchSpinner}
+            title=""
+            hidden
+          />
+        </div>
+        <input
+          class="search-input"
+          id="search-input"
+          type="search"
+          placeholder="Search titles and transcripts…"
+          autocomplete="off"
+          ref={refs.searchInput}
+        />
+        <div class="search-results" id="search-results" ref={refs.searchResults} hidden />
         <div class="book-list" id="book-list" ref={refs.bookList} />
       </div>
       <div class="player-view" id="player-view" ref={refs.playerView}>

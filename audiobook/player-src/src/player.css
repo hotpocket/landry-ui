@@ -369,3 +369,71 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
   width: 0;
   background: #4a9eff;
 }
+
+/* Library search ----------------------------------------------------------
+   Searching is 10ms over 62k chunks; the cost is fetching transcripts that are
+   not on the client yet. So the UI is built around arrival, not around waiting:
+   results for what is loaded appear at once and the rest stream in.
+
+   Audio is never fetched by search. A chapter is megabytes, and warming audio
+   for results nobody has clicked would spend a phone's bandwidth on guesses. */
+.library-head { display: flex; align-items: center; gap: 0.5rem; }
+
+.search-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0.5rem 0 1rem;
+  padding: 0.5rem 0.75rem;
+  font: inherit;
+  font-size: 0.9rem;
+  color: #ddd;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+}
+.search-input:focus { outline: none; border-color: #4a9eff; }
+
+/* A 6px pip, deliberately: loading a transcript is background work, and a bar
+   or a modal would imply the library is unusable while it happens. The title
+   attribute carries what is loading — hover or tap, no layout spent. */
+.search-spinner {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4a9eff;
+  flex-shrink: 0;
+  animation: search-pulse 1s ease-in-out infinite;
+  cursor: help;
+}
+.search-spinner[hidden] { display: none; }
+@keyframes search-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+
+.search-results[hidden] { display: none; }
+.search-group { margin-bottom: 1rem; }
+.search-group-head {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #777;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid #262626;
+}
+.search-hit {
+  display: flex;
+  gap: 0.6rem;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid #1c1c1c;
+  padding: 0.5rem 0.25rem;
+  color: #bbb;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.search-hit:hover { background: #161616; color: #eee; }
+.search-hit-where { color: #4a9eff; flex-shrink: 0; font-size: 0.75rem; padding-top: 0.1rem; }
+.search-hit-text { flex: 1; }
+.search-hit mark { background: rgba(74, 158, 255, 0.25); color: inherit; border-radius: 2px; }
+.search-more, .search-empty { color: #666; font-size: 0.8rem; padding: 0.5rem 0.25rem; }

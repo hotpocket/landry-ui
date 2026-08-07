@@ -1,0 +1,17 @@
+{
+  "name": "landry-ui-player",
+  "private": true,
+  "type": "module",
+  "description": "Source for the built player in ../player/. Consumers copy the artifacts, never this directory.",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "preact": "^10.27.2"
+  }
+}

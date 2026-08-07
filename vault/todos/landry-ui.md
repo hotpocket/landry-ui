@@ -8,4 +8,8 @@ status: active
 ---
 # landry-ui TODOs
 
-_No open engineering items as of 2026-07-06._
+- [ ] Reading-mode chapter progress: 1–2px blue line pinned to the top of the
+      view, filling left→right with position within the current chapter. Lives
+      in the vanilla player (`audiobook/vanilla/player.{js,css}`,
+      `.reading-mode` rules). Moved here from chatterbook's todos 2026-08-07 —
+      no builder-side work.

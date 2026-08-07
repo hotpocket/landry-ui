@@ -32,12 +32,22 @@ must pass **unchanged**.
 
 Deployed **alone**, before any todo work touches the player.
 
-- **Layout.** `audiobook/vanilla/` frozen exactly as-is. React source in
-  `audiobook/player/src/`, built classic-script artifacts committed to
-  `audiobook/player/` (`player.js`, `player.css`, `sw.js`, `icons/`).
-  Consumers switch with a one-line path change — books' `PLAYER=` in
-  `scripts/build-shell.sh`, chatterbook's `./luinst audiobook/player`. That
-  one line is also the rollback.
+- **Layout.** `audiobook/vanilla/` frozen exactly as-is. Source and toolchain in
+  `audiobook/player-src/` (`package.json`, `tsconfig.json`, `src/`,
+  gitignored `node_modules/`); built classic-script artifacts committed to
+  `audiobook/player/` (`player.js`, `player.css`, `sw.js`, `icons/`,
+  `manifest.webmanifest`). Consumers switch with a one-line path change —
+  books' `PLAYER=` in `scripts/build-shell.sh`, chatterbook's
+  `./luinst audiobook/player`. That one line is also the rollback.
+
+  Source is deliberately **not** under `audiobook/player/`: `luinst` does
+  `cp -r <component>/* <dest>/`, so a combined directory would ship `src/`,
+  `package.json` and `node_modules/` to every consumer.
+
+- **Core tests need no build.** Node 24 strips TypeScript types natively, so
+  `test/core-*.test.mjs` import `../audiobook/player-src/src/core/*.ts`
+  directly. The framework-free core is therefore testable without esbuild,
+  without a browser, and without the artifacts being built at all.
 - **Decomposition.** Seven modules: time model (book clock, chapter starts,
   summary clock), routing, progress/persistence, transcript+follow, offline/SW
   client, library+tree render, chapters+scrubber+touch.

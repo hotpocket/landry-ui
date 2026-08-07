@@ -24,7 +24,7 @@ A framework does not fix the blob; it forces the fix. Porting the 54-var closure
 unchanged yields a 54-field reducer with JSX on top. The decomposition is the
 work.
 
-What makes this survivable: `test/` is 10 Playwright suites (~152 assertions)
+What makes this survivable: `test/` is 9 Playwright suites (152 assertions)
 driven through the DOM with written contracts. They are framework-agnostic and
 must pass **unchanged**.
 
@@ -70,7 +70,7 @@ Deployed **alone**, before any todo work touches the player.
 
 ### Parity bar
 
-- All 10 Playwright suites pass **unchanged**. No edits to test files. A rewrite
+- All 9 browser suites (152 assertions) pass **unchanged**, via `scripts/parity.sh`. No edits to test files. A rewrite
   that gets to edit its own tests is not a parity check. Where a test genuinely
   encodes a vanilla implementation detail rather than behaviour, raise it rather
   than quietly relaxing it.

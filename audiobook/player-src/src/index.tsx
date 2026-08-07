@@ -8,6 +8,7 @@
 
 import { render, createRef } from 'preact';
 import { Shell, type ShellRefs } from './view/Shell.tsx';
+import { PlayerEngine } from './engine/player.ts';
 
 export interface PlayerChrome {
   back?: boolean;
@@ -71,6 +72,17 @@ function init(opts: PlayerOptions): void {
     />,
     opts.container,
   );
+
+  // feedback.js is a separate artifact loaded by the host page; a site that
+  // does not include it simply has no feedback link.
+  const feedback = (globalThis as { RepoStoryFeedback?: { init: (url?: string) => void } })
+    .RepoStoryFeedback;
+  feedback?.init(opts.feedbackUrl);
+
+  const engine = new PlayerEngine(opts, refs, localStorage);
+  engine.start();
 }
 
-export default { init };
+// Named, not default: esbuild's globalName would otherwise expose the API as
+// RepoStoryPlayer.default.init and silently break every host.
+export { init };

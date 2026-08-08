@@ -22,6 +22,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .dl-btn.downloading { color: #4a9eff; border-color: #4a9eff; cursor: default; }
 .dl-btn.downloaded { color: #34d399; border-color: #34d399; cursor: default; }
 .dl-btn.downloaded:hover { color: #34d399; border-color: #34d399; }
+/* Failure must read at a glance, not only in the label — this is the retry
+   button, so it keeps the pointer cursor and the hover invitation. */
+.dl-btn.error { color: #f87171; border-color: #f87171; }
 
 /* 90vw: use wide screens; pane split is the user's to drag. */
 .player-view { max-width: 90vw; margin: 0 auto; padding: 2rem 1rem; display: none; }

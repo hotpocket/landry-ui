@@ -125,7 +125,7 @@ export class PlayerEngine {
   private dividerDrag: DividerDrag | null = null;
   private trackDrag: { wasPlaying: boolean } | null = null;
 
-  private offlineState: Record<number, 'downloading' | 'downloaded' | undefined> = {};
+  private offlineState: Record<number, 'downloading' | 'downloaded' | 'error' | undefined> = {};
   private openMenuFor: number | null = null;
 
   constructor(opts: PlayerOptions, refs: ShellRefs, store: KeyValueStore) {
@@ -876,7 +876,11 @@ export class PlayerEngine {
         console.warn('offline shell incomplete:', shellFailures.join(', '));
       }
     } catch {
-      this.offlineState[bookIdx] = undefined;
+      // 'error', not undefined: resetting to idle made a failure look like the
+      // click never happened — on a phone (expired signature, dropped radio)
+      // the only evidence was a console nobody can open. The error state keeps
+      // the button clickable, so the retry is the same tap.
+      this.offlineState[bookIdx] = 'error';
     } finally {
       cleanup();
       this.renderLibrary();

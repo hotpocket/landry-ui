@@ -35,7 +35,7 @@ export interface LibraryProps {
   tree?: TreeNode | null;
   formatTime: (s: number) => string;
   progressStatus: (bookIdx: number) => '' | 'in-progress' | 'complete';
-  offlineState: Record<number, 'downloading' | 'downloaded' | undefined>;
+  offlineState: Record<number, 'downloading' | 'downloaded' | 'error' | undefined>;
   onOpen: (bookIdx: number) => void;
   onDownload: (bookIdx: number) => void;
   bookActions?: BookAction[];
@@ -89,6 +89,7 @@ function BookItem({ book, idx, ...p }: { book: LibraryBook; idx: number } & Libr
   const offline = p.offlineState[idx];
   const dlLabel = offline === 'downloaded' ? 'Downloaded ✓'
     : offline === 'downloading' ? 'Preparing…'
+    : offline === 'error' ? 'Failed — retry ↻'
     : 'Download ⇣';
   const menuOpen = p.openMenuFor === idx;
 
@@ -107,10 +108,13 @@ function BookItem({ book, idx, ...p }: { book: LibraryBook; idx: number } & Libr
       <div class="book-actions">
         <button
           class={'dl-btn' + (offline ? ' ' + offline : '')}
-          title={offline === 'downloaded' ? 'Available offline' : 'Download all chapters for offline'}
+          title={offline === 'downloaded' ? 'Available offline'
+            : offline === 'error' ? 'Download failed — tap to retry'
+            : 'Download all chapters for offline'}
           onClick={(e) => {
             e.stopPropagation();
-            if (offline) return;
+            // 'error' stays clickable: the failed state IS the retry button.
+            if (offline === 'downloading' || offline === 'downloaded') return;
             p.onDownload(idx);
           }}
           dangerouslySetInnerHTML={{ __html: dlLabel }}

@@ -2,10 +2,20 @@
 
 Reusable UI components for brandonlandry.com projects.
 
+Consumed by books.landry.bot and karagame. If you are changing the player for
+the books site, read `change_request.md` in the `books` repo first — it carries
+the build pipeline (`player-src` → `build.mjs` → committed artifacts) and how
+the shell picks the player up.
+
 ## Conventions
 
 - Components live under a feature directory (e.g. `audiobook/`) with platform subdirectories (`vanilla/`, `react/`, `flutter/`).
-- Vanilla JS uses IIFEs, no build step, served as-is.
+- `audiobook/vanilla/` is IIFE JavaScript with no build step, served as-is. It
+  is FROZEN — the parity reference and a fallback for consumers that have not
+  switched (`audiobook/vanilla/RETIREMENT.md`). Do not fix features there.
+- `audiobook/player/` is the current player: TypeScript + Preact, source in
+  `audiobook/player-src/`, built with `node build.mjs`, artifacts committed.
+  Editing the source without rebuilding ships the previous player.
 - React components are TypeScript, use Tailwind for styling.
 - All platform variants implement the same features against the same data formats (manifest.json, transcripts.json, feedback API).
 - Do not include AI attribution in commit messages or source files.

@@ -200,8 +200,29 @@ function recordStreamEntry(cache, urlHref) {
   return indexChain;
 }
 
+// Media is authorized by a signature in the query string, and that signature
+// rotates every time the API mints one. Cached bytes are keyed WITHOUT it: the
+// object is the same object however the request was authorized, so a fresh
+// signature still finds it and an expired one never re-downloads a 141-hour
+// book. Authorization is still enforced — but on the network fetch, which is
+// the only place it can be. If you already hold the bytes, you hold them.
+var SIGNED_PARAMS = ['Policy', 'Signature', 'Key-Pair-Id'];
+
+function cacheKeyUrl(url) {
+  try {
+    var u = new URL(url);
+    SIGNED_PARAMS.forEach(function (p) { u.searchParams.delete(p); });
+    // Drop a query that is now empty so the key matches an unsigned host's URL
+    // exactly (karagame and brandonlandry.com serve these files unsigned).
+    if (!u.searchParams.toString()) u.search = '';
+    return u.href;
+  } catch (err) {
+    return url;
+  }
+}
+
 function audioResponse(e) {
-  var keyReq = new Request(e.request.url);
+  var keyReq = new Request(cacheKeyUrl(e.request.url));
   return Promise.all([caches.open(AUDIO_CACHE), caches.open(STREAM_CACHE)])
     .then(function (opened) {
       var offline = opened[0], stream = opened[1];

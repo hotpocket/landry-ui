@@ -32,6 +32,7 @@ import {
 import { longPressDrag, resizePanels, markProgrammaticScroll, exceededSlop } from './gestures.ts';
 import { TranscriptLoader, wireSearch } from './search-ui.ts';
 import { isRecent } from '../core/recency.ts';
+import { withMediaQuery } from '../core/media-url.ts';
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
 const TS_RATIO = 1.25;
@@ -177,7 +178,14 @@ export class PlayerEngine {
 
   private audioUrlFor(ch: Chapter): string {
     const file = this.summaryMode && ch.summary?.filename ? ch.summary.filename : ch.filename;
-    return (this.opts.audioBaseUrl ?? 'audio/') + file;
+    // Appended after the filename, not onto the base: a query on the base would
+    // address a different object entirely.
+    return withMediaQuery((this.opts.audioBaseUrl ?? 'audio/') + file, this.mediaQuery());
+  }
+
+  /** The signature for the open book, if the host supplied one. */
+  private mediaQuery(): string {
+    return (this.currentBook as { media_query?: string } | null)?.media_query ?? '';
   }
 
   // ------------------------------------------------------------- progress
@@ -802,6 +810,8 @@ export class PlayerEngine {
         ? [book.chapters[0], book.chapters[book.chapters.length - 1]]
         : [];
       const results = await Promise.all(probes.map(async (ch) => {
+        // Unsigned on purpose: the cache is keyed without the signature (see
+        // sw.js), so a probe must not carry one either or it would never match.
         const url = (this.opts.audioBaseUrl ?? 'audio/') + ch.filename;  // full track, mode-independent
         return (await cache.match(url)) ?? (await cache.match(new URL(url, location.href).href));
       }));
@@ -852,7 +862,10 @@ export class PlayerEngine {
         for (const file of files) {
           const abs = new URL((this.opts.audioBaseUrl ?? 'audio/') + file, location.href).href;
           if (await cache.match(abs)) continue;   // resume picks up cleanly
-          const r = await fetch(abs);
+          // Fetch WITH the signature, store WITHOUT it: the bytes are the same
+          // object however they were authorized, so a later signature still
+          // finds them and an expired one never re-downloads 141 hours.
+          const r = await fetch(withMediaQuery(abs, this.mediaQuery()));
           if (!r.ok) throw new Error(`fetch ${file} failed`);
           const blob = await r.blob();
           await cache.put(abs, new Response(blob, { headers: r.headers }));

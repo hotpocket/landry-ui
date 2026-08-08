@@ -3,7 +3,7 @@ type: session
 date: 2026-08-07
 projects: [landry-ui, chatterbook, books]
 concern: audiobooks
-summary: "Decomposed the 1,624-line vanilla player into a framework-free TS core plus a Preact view and shipped it to books.landry.bot, then landed all seven outstanding todos across three repos. Parity is 183 assertions passing UNEDITED via a new scripts/parity.sh that refuses to run if it would test vanilla against itself. Mutation testing found eleven real defects in the new work, including an unloaded book displaying as 100% complete and a sign-out that would have stopped clearing the session cookie."
+summary: "Decomposed the 1,624-line vanilla player into a framework-free TS core plus a Preact view and shipped it to books.landry.bot, then landed all seven outstanding todos across three repos. Parity is 158 assertions passing UNEDITED via a new scripts/parity.sh that refuses to run if it would test vanilla against itself. Mutation testing found eleven real defects in the new work, including an unloaded book displaying as 100% complete and a sign-out that would have stopped clearing the session cookie."
 status: complete
 ---
 
@@ -57,7 +57,7 @@ identical to vanilla — otherwise a green run could mean "tested vanilla agains
 itself", which is the failure mode that makes a parity check worthless.
 Verified sensitive by md5 and by breaking the build on purpose.
 
-183 assertions across 10 browser suites, plus 81 node assertions on the core.
+158 parity assertions, plus 81 node assertions on the core.
 
 ### Mutation testing found eleven real defects in this session's own work
 
@@ -114,10 +114,18 @@ therefore counted per grantee, refused loudly rather than truncated.
 
 ### Rejected, with the reason, so nobody re-derives it
 
-- **Signed URLs per object.** Both media cache policies use
+> **OVERTURNED 2026-08-08.** The signed-URL rejection below was WRONG — not
+> contingent on the cache policy, wrong. CloudFront excludes the signature
+> parameters from the cache key even under `query_string_behavior=all()`,
+> verified 5/5 against production. Signed URLs became the mechanism for
+> everything the next day, and the path-scoped grant cookies described above are
+> now the odd one out. See `books/docs/signed-url-verification.md` and
+> [[2026-08-08 - visibility-became-a-row-write]].
+
+- **Signed URLs per object.** ~~Both media cache policies use
   `query_string_behavior=all()`, so every user's signed URL is a distinct
   CloudFront cache object — a shared or public book loses edge caching entirely,
-  per reader. The service worker caches by URL too, so offline downloads churn.
+  per reader. The service worker caches by URL too, so offline downloads churn.~~
 - **Server-side search.** Measured on the real karagame transcripts (4 books,
   62,033 chunks, 8.4 MB of text): 4.3 MB gzip over the wire, 42 ms to parse,
   **10 ms for a full linear scan**. There is no performance problem. A Lambda

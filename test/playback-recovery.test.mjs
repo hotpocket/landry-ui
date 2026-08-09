@@ -37,6 +37,9 @@
 //      behind a listener who stopped the book
 //   E. failures are recorded — with how long the media signature had left,
 //      which is the number that explains a 403 nobody was there to see
+//   G. a host that re-signs a book IN PLACE is picked up by the next chapter
+//      load — books.landry.bot's whole recovery from an expired media signature
+//      depends on this, and nothing else asserts it
 //   F. a gesture that starts a chapter clears the pause: `userPaused` is what
 //      every recovery path consults, so a book restarted from the chapter list
 //      while paused must not keep playing with "wants silence" still set — the
@@ -83,7 +86,7 @@ function cfQuery(expiresAtS) {
 const EXPIRED_QUERY = cfQuery(Math.floor(Date.now() / 1000) - 300);
 
 // --- test server: the fixture, with a chapter that can 403 or simply hang ---
-const state = { deny2: false, hang2: false, slow2: 0, requests: [] };
+const state = { deny2: false, hang2: false, slow2: 0, requests: [], urls: [] };
 const MIME = { html: 'text/html', js: 'text/javascript', css: 'text/css',
                m4a: 'audio/mp4', json: 'application/json', webmanifest: 'application/json' };
 const hung = [];
@@ -117,6 +120,7 @@ function serve(req, res, path) {
 const server = createServer((req, res) => {
   const path = new URL(req.url, 'http://x').pathname;
   state.requests.push(path);
+  state.urls.push(req.url);          // with the query: the signature rides there
   // Deliberately does NOT close the hung sockets. Destroying them turns the
   // stall into an `error`, which the error path already recovers from — the
   // suite would then pass with no watchdog at all.
@@ -167,6 +171,8 @@ async function freshPage() {
           init(cfg) {
             cfg.stallTimeoutMs = stallMs;
             (cfg.books || []).forEach((b) => { b.media_query = query; });
+            // Kept so a test can act as the host does: re-sign a book in place.
+            window.__cfg = cfg;
             return v.init(cfg);
           },
         });
@@ -395,6 +401,32 @@ const chapter2Requests = () => state.requests.filter((p) => p.endsWith('chapter_
   const diag = await page.evaluate(() => JSON.parse(localStorage.getItem('rs-diag') || '[]'));
   check(diag.some((d) => d.ev === 'stall'),
         `F: a stall after a hand-started chapter is still recovered (${diag.map((d) => d.ev).join(',') || 'nothing recorded'})`);
+  await page.context().close();
+}
+
+// --- G: a host re-signing a book in place is picked up ----------------------
+{
+  state.deny2 = false;
+  state.hang2 = false;
+  const page = await freshPage();
+  await playFirstChapter(page);
+  const loaded = state.urls.filter((u) => u.includes('chapter_0001')).pop();
+  check(/Policy=/.test(loaded), `G: chapter 1 was fetched with the signature (${!!loaded})`);
+
+  // Exactly what books.landry.bot's onAuthRefresh does: replace the query on the
+  // book object it handed init(). No player API is involved, which is the point
+  // — and why it would break silently if the player ever cached the URL.
+  await page.evaluate(() => {
+    window.__cfg.books.forEach((b) => { b.media_query = 'Policy=fresh&Signature=fresh&Key-Pair-Id=KP'; });
+  });
+  await page.click('#btn-next');
+  await page.waitForFunction(() => {
+    const a = document.querySelector('audio');
+    return a && /chapter_0002/.test(a.currentSrc);
+  }, null, { timeout: 8000 }).catch(() => {});
+  const next = state.urls.filter((u) => u.includes('chapter_0002')).pop();
+  check(!!next && next.includes('Signature=fresh'),
+        `G: the next chapter is fetched with the re-signed query (${next})`);
   await page.context().close();
 }
 

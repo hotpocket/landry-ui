@@ -9,6 +9,7 @@
 import { render, createRef } from 'preact';
 import { Shell, type ShellRefs } from './view/Shell.tsx';
 import { PlayerEngine } from './engine/player.ts';
+import { readDiag, type DiagEntry } from './core/diagnostics.ts';
 
 export interface PlayerChrome {
   back?: boolean;
@@ -34,6 +35,8 @@ export interface PlayerOptions {
   embedded?: boolean;
   autoOpenLast?: boolean;
   scenePauseMs?: number;
+  /** How long a silent, non-advancing chapter is given before it is reloaded. */
+  stallTimeoutMs?: number;
   onAuthRefresh?: () => void | Promise<void>;
   chrome?: PlayerChrome;
   /** Absent means no menu is rendered at all — a static host cannot show one. */
@@ -83,6 +86,21 @@ function init(opts: PlayerOptions): void {
   engine.start();
 }
 
+/**
+ * What playback recorded when it last failed, oldest first.
+ *
+ * Exposed because the failures that matter happen on a phone with its screen
+ * off, where there is no console to read and nobody at the machine: the host
+ * renders this back to the person who was listening.
+ */
+function diagnostics(): DiagEntry[] {
+  try {
+    return readDiag(localStorage.getItem('rs-diag'));
+  } catch {
+    return [];   // storage blocked (private mode, embedded frame)
+  }
+}
+
 // Named, not default: esbuild's globalName would otherwise expose the API as
 // RepoStoryPlayer.default.init and silently break every host.
-export { init };
+export { init, diagnostics };

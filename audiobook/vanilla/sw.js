@@ -206,7 +206,12 @@ function recordStreamEntry(cache, urlHref) {
 // signature still finds it and an expired one never re-downloads a 141-hour
 // book. Authorization is still enforced — but on the network fetch, which is
 // the only place it can be. If you already hold the bytes, you hold them.
-var SIGNED_PARAMS = ['Policy', 'Signature', 'Key-Pair-Id'];
+// `rsr` joins them for the same reason: the player appends it to force a
+// genuinely new request when a chapter's fetch has hung (reloading the identical
+// URL is coalesced onto the stuck request and recovers nothing). It identifies
+// an ATTEMPT, not an object — keyed on, a stalled chapter would land in the
+// cache once per recovery and evict the rest of the book to hold the copies.
+var SIGNED_PARAMS = ['Policy', 'Signature', 'Key-Pair-Id', 'rsr'];
 
 function cacheKeyUrl(url) {
   try {

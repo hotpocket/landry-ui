@@ -28,11 +28,13 @@ import {
 import { isSceneBreak, crossedSceneBreak } from '../core/scene.ts';
 import {
   shouldRetry, retryDelayMs, prefetchKey, shouldPrefetch,
+  STALL_TIMEOUT_MS, shouldRecoverFromStall,
 } from '../core/playback-policy.ts';
+import { appendDiag, type DiagEntry } from '../core/diagnostics.ts';
 import { longPressDrag, resizePanels, markProgrammaticScroll, exceededSlop } from './gestures.ts';
 import { TranscriptLoader, wireSearch } from './search-ui.ts';
 import { isRecent } from '../core/recency.ts';
-import { withMediaQuery } from '../core/media-url.ts';
+import { withMediaQuery, secondsUntilExpiry, withCacheBust } from '../core/media-url.ts';
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
 const TS_RATIO = 1.25;
@@ -102,6 +104,23 @@ export class PlayerEngine {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private retryPending = false;
   private retryGen = 0;
+
+  // A PERSON asked for silence, as opposed to the element falling silent. Every
+  // recovery path has to consult this: playIntent deliberately survives an
+  // error-induced pause so recovery can play through it, and that same
+  // stickiness restarted books their listener had stopped — the pending retry,
+  // the retry on returning to visibility, and a pendingPlayAfterLoad landing
+  // after the tap all did it. Only the transport and the lock-screen controls
+  // set this; nothing about the element's own state can.
+  private userPaused = false;
+
+  // The watchdog for a failure that fires no event at all: a request that hangs
+  // means no loadedmetadata, no playing, no error, and (before this) nobody
+  // watching. Armed on a load that wants to play and on 'waiting'.
+  private stallTimer: ReturnType<typeof setTimeout> | null = null;
+  private stallArmedAt = 0;
+  private stallRecoveries = 0;
+  private stallNonce = 0;
 
   private prefetchedKey: string | null = null;
 
@@ -205,7 +224,12 @@ export class PlayerEngine {
 
   // ------------------------------------------------------------ chapters
 
-  private loadChapter(idx: number, timeInChapter: number, autoplay: boolean): void {
+  /**
+   * `bust` forces a URL the network stack has not seen. Only the stall path
+   * passes it, and only because reloading the identical URL while its request
+   * hangs is coalesced onto the hung request — see `withCacheBust`.
+   */
+  private loadChapter(idx: number, timeInChapter: number, autoplay: boolean, bust = false): void {
     if (!this.currentBook) return;
     if (idx < 0 || idx >= this.currentBook.chapters.length) return;
     this.cancelScenePause();
@@ -221,8 +245,13 @@ export class PlayerEngine {
     // show immediately even if the file is slow (or missing).
     this.setReadingChapterLabel(ch);
     this.updateMediaSessionMetadata();
-    this.audio.src = this.audioUrlFor(ch);
+    this.audio.src = withCacheBust(this.audioUrlFor(ch), bust ? ++this.stallNonce : 0);
     this.audio.load();
+
+    // A load that means to play is watched: if the request hangs there is no
+    // error, no metadata and no 'waiting' — the element never starts, so this is
+    // the only place a stalled chapter boundary can be noticed.
+    if (autoplay) this.armStallWatch();
 
     const t = Math.max(0, timeInChapter || 0);
     const onMeta = () => {
@@ -231,10 +260,26 @@ export class PlayerEngine {
       try { this.audio.currentTime = Math.min(t, this.audio.duration || t); } catch { /* ignore */ }
       if (this.pendingPlayAfterLoad) {
         this.pendingPlayAfterLoad = false;
-        this.audio.play().catch(() => { /* autoplay refusal is not an error */ });
+        // A slow chapter is exactly when someone gives up and taps pause; the
+        // bytes then arrived and played over them.
+        if (!this.userPaused) this.audio.play().catch(() => { /* autoplay refusal is not an error */ });
       }
     };
     this.audio.addEventListener('loadedmetadata', onMeta);
+  }
+
+  /**
+   * A gesture that asks for a specific place in the book, and for sound.
+   *
+   * Clearing `userPaused` here is load-bearing: it is the flag every recovery
+   * path checks, so a chapter started by tapping the list or a transcript line
+   * while the book was paused would otherwise play with "the listener wants
+   * silence" still set — and the first stall or 403 after it would refuse to
+   * recover, silently.
+   */
+  private playChapterFrom(idx: number, timeInChapter: number): void {
+    this.userPaused = false;
+    this.loadChapter(idx, timeInChapter, true);
   }
 
   private seekToBookTime(bt: number, autoplay: boolean): void {
@@ -266,9 +311,32 @@ export class PlayerEngine {
     if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
   };
 
+  /**
+   * Whether recovery should end up playing. `playIntent` says the element was
+   * trying; `userPaused` says a person overruled it. Recovery must play through
+   * an error-induced pause and must never play through a deliberate one.
+   *
+   * The `userPaused` term is a deliberate last line of defence rather than the
+   * primary one — a stopped book is refused earlier, at the points that schedule
+   * work (handleAudioError, armStallWatch, shouldRecoverFromStall). It is kept
+   * because every future caller of loadChapter-with-autoplay reaches it, and
+   * this is the exact defect that shipped: a recovery that played over the
+   * listener.
+   */
+  private recoveryShouldPlay(): boolean {
+    return this.playIntent && !this.userPaused;
+  }
+
   private handleAudioError = (): void => {
+    this.cancelStallWatch();     // an error is not a stall; this path owns it now
+    this.diag('error', {
+      code: this.audio.error?.code ?? null,
+      network: this.audio.networkState,
+      ready: this.audio.readyState,
+    });
+    if (this.userPaused) return; // stopped by hand: heal nothing, retry nothing
     if (!this.currentBook || this.retryPending) return;
-    if (!shouldRetry(this.retryCount)) return;   // capped: no infinite spin offline
+    if (!shouldRetry(this.retryCount)) { this.diag('gave-up', {}); return; }   // capped: no infinite spin offline
     this.retryPending = true;
     const myGen = this.retryGen;
     const delay = retryDelayMs(this.retryCount);
@@ -287,10 +355,86 @@ export class PlayerEngine {
         // Only a still-errored element gets reloaded: if playback recovered
         // this timer is stale and a reload would audibly yank them backwards.
         if (!this.audio.error) return;
-        this.loadChapter(this.resumePos.idx, this.resumePos.t, this.playIntent);
+        this.diag('retry', { attempt: this.retryCount, ch: this.resumePos.idx + 1 });
+        this.loadChapter(this.resumePos.idx, this.resumePos.t, this.recoveryShouldPlay());
       }, delay);
     });
   };
+
+  // ------------------------------------------------------------ stall watchdog
+
+  private cancelStallWatch(): void {
+    if (this.stallTimer !== null) { clearTimeout(this.stallTimer); this.stallTimer = null; }
+  }
+
+  /**
+   * Watch for silence that reports nothing. Called when a load is asked to play
+   * and when the element says it is waiting for data; either way, if the clock
+   * has not moved by the timeout and the element still holds nothing, the
+   * chapter is reloaded.
+   *
+   * Re-arming is idempotent by intent: the newest arm wins, so a burst of
+   * 'waiting' events is one watch, not one per event.
+   */
+  private armStallWatch(): void {
+    this.cancelStallWatch();
+    this.stallArmedAt = this.audio.currentTime || 0;
+    this.stallTimer = setTimeout(this.onStallTimeout, this.opts.stallTimeoutMs ?? STALL_TIMEOUT_MS);
+  }
+
+  private onStallTimeout = (): void => {
+    this.stallTimer = null;
+    if (!this.currentBook) return;
+    const advanced = (this.audio.currentTime || 0) > this.stallArmedAt + 0.05;
+    if (!shouldRecoverFromStall({
+      playIntent: this.playIntent,
+      userPaused: this.userPaused,
+      scenePauseHolding: this.scenePauseHolding,
+      ended: this.audio.ended,
+      advanced,
+      canPlayThrough: this.audio.readyState >= 3,   // HAVE_FUTURE_DATA
+    })) return;
+    // Capped like the retries, and for the same reason: a phone with no network
+    // must give up rather than reload forever. Reset by any real progress.
+    if (!shouldRetry(this.stallRecoveries)) { this.diag('gave-up', { after: 'stall' }); return; }
+    this.stallRecoveries++;
+    this.diag('stall', {
+      ch: this.resumePos.idx + 1,
+      network: this.audio.networkState,
+      ready: this.audio.readyState,
+    });
+    // A stall leaves no error to clear, so the retry cap for errors is untouched
+    // here; this reload is the stall's own attempt. Busted, because the request
+    // it is replacing is still open and would otherwise swallow it.
+    this.loadChapter(this.resumePos.idx, this.resumePos.t, this.recoveryShouldPlay(), true);
+  };
+
+  // ------------------------------------------------------------- diagnostics
+
+  /**
+   * One line of evidence. A phone with its screen off has no console and its
+   * listener is not at the machine, so a failure that records nothing can only
+   * be guessed at — which is how a 15-minute media signature went a day
+   * undiagnosed, presenting as "it stutters with the screen off".
+   *
+   * `sigExpiresIn` is the field that would have answered it: seconds of life
+   * left in the signature at the moment of failure, negative once expired. The
+   * signature itself is never written down.
+   */
+  private diag(ev: string, extra: Record<string, unknown>): void {
+    const entry: DiagEntry = {
+      at: new Date().toISOString(),
+      ev,
+      ch: this.currentChapterIdx + 1,
+      pos: Math.round(this.audio.currentTime || 0),
+      sigExpiresIn: secondsUntilExpiry(this.mediaQuery(), Date.now()),
+      visible: typeof document !== 'undefined' ? document.visibilityState : null,
+      ...extra,
+    };
+    try {
+      this.store.setItem('rs-diag', appendDiag(this.store.getItem('rs-diag'), entry));
+    } catch { /* storage full or blocked: diagnostics never break playback */ }
+  }
 
   // --------------------------------------------------------- MediaSession
 
@@ -325,8 +469,11 @@ export class PlayerEngine {
     const set = (action: MediaSessionAction, handler: MediaSessionActionHandler) => {
       try { navigator.mediaSession.setActionHandler(action, handler); } catch { /* unsupported action */ }
     };
-    set('play', () => { this.audio.play().catch(() => { /* ignore */ }); });
-    set('pause', () => { this.cancelScenePause(); this.audio.pause(); });
+    // The lock screen is the only control a listener with the screen off has,
+    // so these must be the same acts as the on-screen transport — not a bare
+    // play()/pause() that leaves the recovery machinery running behind them.
+    set('play', () => this.startPlayback());
+    set('pause', () => this.stopPlayback());
     set('previoustrack', () => this.prevChapter());
     set('nexttrack', () => this.nextChapter());
     set('seekbackward', (d) => this.skip(-(d?.seekOffset ?? 30)));
@@ -399,18 +546,53 @@ export class PlayerEngine {
 
   // ------------------------------------------------------------ transport
 
+  /**
+   * What the transport control means right now — true when a tap should stop
+   * things. NOT `!audio.paused`: an element that is retrying a failed chapter,
+   * or waiting on a load that hangs, is silent while fully intending to play,
+   * and a button labelled "play" there both lies and gives the listener no way
+   * to call it off.
+   *
+   * The scene-break hold is excluded on purpose. It is brief and already yields
+   * to a tap as "resume now", which is what `scene-pause` asserts.
+   */
+  private intendsPlayback(): boolean {
+    if (!this.audio.paused) return true;
+    if (this.scenePauseHolding) return false;
+    return this.playIntent && !this.userPaused;
+  }
+
+  /** The listener asked for sound. */
+  private startPlayback(): void {
+    this.userPaused = false;
+    // A fresh cap: asking again is not the same as the attempt that gave up.
+    this.resetRetries();
+    this.audio.play().catch(() => { /* autoplay refusal is not an error */ });
+  }
+
+  /**
+   * The listener asked for silence, and everything that might override it is
+   * called off — the scene-hold resume timer, a pending retry, a pending
+   * autoplay-on-load, and the stall watchdog.
+   */
+  private stopPlayback(): void {
+    // ONE authority. This deliberately does not also clear `playIntent` or
+    // `pendingPlayAfterLoad`: those record what the ELEMENT was doing, they are
+    // set from element events and load bookkeeping, and keeping a third copy of
+    // "the listener wants silence" in sync with them is how the original bug
+    // happened. Every path that could resume consults `userPaused` instead.
+    this.userPaused = true;
+    this.cancelScenePause();
+    this.resetRetries();     // scheduled work is cancelled, not merely ignored
+    this.audio.pause();
+  }
+
   togglePlay = (): void => {
-    if (this.audio.paused) {
-      this.audio.play().catch(() => { /* ignore */ });
-    } else {
-      // An explicit pause must stick: the scene-hold resume timer would
-      // otherwise fire moments later and override the user.
-      this.cancelScenePause();
-      this.audio.pause();
-    }
+    if (this.intendsPlayback()) this.stopPlayback();
+    else this.startPlayback();
   };
 
-  skip = (s: number): void => { this.seekToBookTime(this.bookTime() + s, !this.audio.paused); };
+  skip = (s: number): void => { this.seekToBookTime(this.bookTime() + s, this.intendsPlayback()); };
 
   prevChapter = (): void => {
     if (!this.currentBook) return;
@@ -419,14 +601,14 @@ export class PlayerEngine {
       try { this.audio.currentTime = 0; } catch { /* ignore */ }
       return;
     }
-    this.loadChapter(this.currentChapterIdx - 1, 0, !this.audio.paused);
+    this.loadChapter(this.currentChapterIdx - 1, 0, this.intendsPlayback());
   };
 
   nextChapter = (): void => {
     if (!this.currentBook) return;
     if (this.currentChapterIdx >= this.currentBook.chapters.length - 1) return;
     this.setFollow(true, false);
-    this.loadChapter(this.currentChapterIdx + 1, 0, !this.audio.paused);
+    this.loadChapter(this.currentChapterIdx + 1, 0, this.intendsPlayback());
   };
 
   private cycleSpeed = (): void => {
@@ -440,7 +622,10 @@ export class PlayerEngine {
     this.saveProgress();
     if (!this.currentBook) return;
     if (this.currentChapterIdx < this.currentBook.chapters.length - 1) {
-      this.loadChapter(this.currentChapterIdx + 1, 0, true);
+      // Not unconditionally true: 'ended' can arrive after a pause the listener
+      // took near the end of a chapter, and autoplaying the next one there
+      // restarts a book they stopped.
+      this.loadChapter(this.currentChapterIdx + 1, 0, !this.userPaused);
     }
   };
 
@@ -476,7 +661,7 @@ export class PlayerEngine {
     if (this.scrubbing.idx !== this.currentChapterIdx) {
       // Scrubbed within a chapter that is not loaded: treat it as a request for
       // that chapter rather than guessing an offset from a stale rect.
-      this.loadChapter(this.scrubbing.idx, 0, true);
+      this.playChapterFrom(this.scrubbing.idx, 0);
     }
     this.scrubbing.li.classList.remove('scrubbing');
     this.scrubbing = null;
@@ -529,7 +714,7 @@ export class PlayerEngine {
     this.refs.modeSummary.current?.classList.toggle('on', on);
     if (!this.currentBook || (!changed && !force)) return;
     // The two clocks do not map onto each other — restart the chapter.
-    const wasPlaying = !this.audio.paused;
+    const wasPlaying = this.intendsPlayback();
     this.lastFormattedTime = '';
     this.lastPlayState = null;
     this.lastActiveChunkId = null;
@@ -636,7 +821,7 @@ export class PlayerEngine {
         if (this.didDrag) return;
         if (e.target === scrubberEl) return;
         this.setFollow(true, false);
-        this.loadChapter(i, 0, true);
+        this.playChapterFrom(i, 0);
       });
 
       list.appendChild(li);
@@ -682,9 +867,9 @@ export class PlayerEngine {
     this.setFollow(true, false);
     if (chapterIdx === this.currentChapterIdx) {
       try { this.audio.currentTime = chunk.start; } catch { /* ignore */ }
-      this.audio.play().catch(() => { /* ignore */ });
+      this.startPlayback();
     } else {
-      this.loadChapter(chapterIdx, chunk.start, true);
+      this.playChapterFrom(chapterIdx, chunk.start);
     }
   }
 
@@ -722,7 +907,10 @@ export class PlayerEngine {
       if (prog) prog.style.width = `${d > 0 ? (bt / d) * 100 : 0}%`;
     }
 
-    const paused = this.audio.paused;
+    // Intent, not element state: a chapter being retried or waited on is silent
+    // while still trying to play, and a "play" glyph there offers to start what
+    // is already starting and hides the only way to call it off.
+    const paused = !this.intendsPlayback();
     if (paused !== this.lastPlayState) {
       this.lastPlayState = paused;
       const glyph = paused ? '&#9654;' : '&#9646;&#9646;';
@@ -1137,7 +1325,9 @@ export class PlayerEngine {
     };
     bar.addEventListener('pointerdown', (e: PointerEvent) => {
       if (!this.currentBook) return;
-      this.trackDrag = { wasPlaying: !this.audio.paused };
+      // Intent, not element state: dragging the bar during a recovery must
+      // resume where it lands, not silently demote the book to paused.
+      this.trackDrag = { wasPlaying: this.intendsPlayback() };
       bar.classList.add('dragging');
       bar.setPointerCapture(e.pointerId);
       this.onTrackMove(pctAt(e));
@@ -1250,7 +1440,15 @@ export class PlayerEngine {
     const a = this.audio;
     a.addEventListener('ended', this.onChapterEnded);
     a.addEventListener('error', this.handleAudioError);
-    a.addEventListener('playing', this.resetRetries);
+    a.addEventListener('playing', () => {
+      this.resetRetries();
+      // Real progress clears the stall history: the next hang gets a full cap.
+      this.cancelStallWatch();
+      this.stallRecoveries = 0;
+    });
+    // The element says it has run out of data. Nothing else follows on a phone
+    // whose request hangs — no error, no timeout, no second event.
+    a.addEventListener('waiting', () => this.armStallWatch());
     a.addEventListener('play', () => { this.playIntent = true; });
     a.addEventListener('pause', () => {
       // Not on error, chapter end, or a scene hold: all three fire 'pause'

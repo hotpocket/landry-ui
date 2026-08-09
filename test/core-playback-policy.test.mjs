@@ -22,12 +22,23 @@
 //   H. the key distinguishes book, chapter AND mode, so switching to summary
 //      re-prefetches rather than reusing the full track's entry
 //   I. an unchanged key does not prefetch twice
+//   STALL (2026-08-09)
+//   J. a wanted chapter that never arrives is recovered — the failure with no
+//      `error` event, which nothing was watching
+//   K. an explicit pause is never overridden
+//   L. the scene-break hold is not mistaken for a stall (it looks identical:
+//      playing, then silent, then not advancing)
+//   M. an element that has the data is left alone — reloading would yank the
+//      position backwards to fix nothing
+//   N. a chapter that merely advanced slowly is not a stall
+//   O. nothing is recovered that nobody asked to play
 
 import assert from 'node:assert';
 import { test } from 'node:test';
 import {
   RETRY_MAX, retryDelayMs, shouldRetry,
   PREFETCH_LEAD_S, prefetchKey, shouldPrefetch,
+  STALL_TIMEOUT_MS, shouldRecoverFromStall,
 } from '../audiobook/player-src/src/core/playback-policy.ts';
 
 test('A. retries are capped', () => {
@@ -85,4 +96,45 @@ test('H. the key distinguishes book, chapter and mode', () => {
 test('I. an unchanged key does not prefetch twice', () => {
   assert.equal(shouldPrefetch({ ...base, lastKey: 'k' }), false);
   assert.equal(shouldPrefetch({ ...base, lastKey: 'other' }), true);
+});
+
+// A stalled load: playback was asked for, the element has no data, and the
+// clock has not moved since the watchdog armed.
+const stalled = {
+  playIntent: true,
+  userPaused: false,
+  scenePauseHolding: false,
+  ended: false,
+  advanced: false,
+  canPlayThrough: false,
+};
+
+test('J. a wanted chapter that never arrives is recovered', () => {
+  assert.equal(shouldRecoverFromStall(stalled), true);
+  // The production wait is long enough that a slow phone on a slow radio is
+  // given a real chance before the position is disturbed.
+  assert.ok(STALL_TIMEOUT_MS >= 10000, `stall timeout is patient (${STALL_TIMEOUT_MS}ms)`);
+});
+
+test('K. an explicit pause is never overridden', () => {
+  assert.equal(shouldRecoverFromStall({ ...stalled, userPaused: true }), false);
+});
+
+test('L. a scene-break hold is not a stall', () => {
+  assert.equal(shouldRecoverFromStall({ ...stalled, scenePauseHolding: true }), false);
+});
+
+test('M. an element holding data is left alone', () => {
+  assert.equal(shouldRecoverFromStall({ ...stalled, canPlayThrough: true }), false);
+});
+
+test('N. slow is not stalled', () => {
+  assert.equal(shouldRecoverFromStall({ ...stalled, advanced: true }), false);
+});
+
+test('O. nothing plays that nobody asked for', () => {
+  assert.equal(shouldRecoverFromStall({ ...stalled, playIntent: false }), false);
+  // The chapter finished: onChapterEnded owns what happens next, and a stall
+  // recovery here would reload the chapter that just ended.
+  assert.equal(shouldRecoverFromStall({ ...stalled, ended: true }), false);
 });

@@ -61,3 +61,22 @@ same-length edit (e.g. a constant) is invisible to size-based change detection.
 Browser tests for the vanilla player: `node test/follow.test.mjs` (Playwright
 from the gstack pin; override with `PLAYWRIGHT_LIB`). Fixture regenerates via
 `test/fixture/gen.sh` (needs ffmpeg).
+
+Three entry points, and they cover different things:
+
+- `node --test test/core-*.test.mjs` — the framework-free core. No browser, no
+  build: Node strips the TypeScript types and imports `player-src/src/core/*`
+  directly. Fast enough to run on every edit.
+- `scripts/parity.sh` — every browser suite against the built player. It also
+  reports which suites are *parity* suites and which are *feature* suites, and
+  the classification is derived from how each one resolves the player on disk.
+- individual feature suites (`node test/playback-recovery.test.mjs`,
+  `search`, `book-menu`, `offline-download`, `reading-progress`) — behaviour that
+  frozen vanilla never had, so they load `audiobook/player/` directly.
+
+Suites worth knowing by name: `scene-pause` (the hold yields to a tap),
+`resilience` (403 → onAuthRefresh → retry, capped), `lifecycle` (freeze/thaw,
+the closest a headless test gets to the screen going off), `sw-cache` (the
+service worker streams, caps and never poisons), and `playback-recovery`
+(recovery obeys an explicit pause, a hanging request is recovered, failures are
+recorded to `rs-diag`).

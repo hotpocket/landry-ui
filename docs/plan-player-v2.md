@@ -1,5 +1,14 @@
 # Plan of record — player v2 + the seven todos
 
+**Status: DELIVERED 2026-08-07/08.** Every item below shipped. This is kept as
+the record of what was decided and why, not as a plan — read it for the
+reasoning and the measurements behind choices that are now load-bearing, and see
+`books/vault/sessions/` for what actually happened.
+
+Two decisions recorded here were later **overturned by measurement** and are
+marked inline: the signed-URL rejection (§ Rejected) and the parity assertion
+count. Take the marked corrections, not the original text.
+
 Agreed 2026-08-07 in a grilling session. Spans three repos: `landry-ui`,
 `chatterbook`, `landry.bot/books`. This document is the contract for the
 autonomous run; where the work and this document disagree, this document is
@@ -70,7 +79,10 @@ Deployed **alone**, before any todo work touches the player.
 
 ### Parity bar
 
-- All 9 browser suites (152 assertions) pass **unchanged**, via `scripts/parity.sh`. No edits to test files. A rewrite
+- All 9 browser suites pass **unchanged**, via `scripts/parity.sh`. (The figure
+  quoted in this document and in the 2026-08-07 recap was later found to be
+  inflated: feature suites were being swept into the parity run. The parity
+  count is **158**.) No edits to test files. A rewrite
   that gets to edit its own tests is not a parity check. Where a test genuinely
   encodes a vanilla implementation detail rather than behaviour, raise it rather
   than quietly relaxing it.
@@ -219,7 +231,16 @@ cookie whose policy is literally `https://<domain>/priv/<space_id>/*`
 a grant row alone would list a shared book in the grantee's library and then
 403 every chapter. Something must also unlock the bytes.
 
-#### Rejected: signed URLs
+#### Rejected: signed URLs — **OVERTURNED 2026-08-08**
+
+> This rejection was wrong, and wrong on its own terms rather than because
+> circumstances changed. CloudFront excludes the signature parameters from the
+> cache key even under `query_string_behavior=all()` — verified 5/5 against
+> production the next day, `books/docs/signed-url-verification.md`. Signed URLs
+> became the mechanism for public books, private books and visibility itself;
+> the path-scoped grant cookies described above are now the odd one out and are
+> logged for replacement. The reasoning below is left standing because it was
+> persuasive and wrong, which is the useful part.
 
 Both media cache policies use `query_string_behavior=all()`
 (`stack.py:230,253`), so every user's signed URL is a **distinct CloudFront

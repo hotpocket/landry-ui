@@ -180,6 +180,15 @@ dependencies" boundary is worth keeping.
 
 ### 7 — Search
 
+> **SUPERSEDED 2026-08-08.** What is described here was built and shipped, then
+> the whole search surface was redesigned and tabled before any of the new
+> design was written — a magnifier that expands, a paged results page with
+> per-book chips, AND-only clauses, and a separate in-book find. The in-player
+> box below is expected to be replaced by it. The measurements here still hold
+> and are the reason book-level search stays client-side; what changed is the
+> shape, not the arithmetic. See `books/docs/search-discussion.md` for what is
+> settled, what is still open, and the index question that blocks it.
+
 Client-side. Measured, against the 17.8 MB karagame `transcripts.json`
 (4 books, 62,033 chunks, 8.4 MB of actual text): **4.3 MB gzip over the wire,
 42 ms to parse, 10 ms for a full linear scan**. There is no performance problem

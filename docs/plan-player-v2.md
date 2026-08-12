@@ -41,7 +41,10 @@ must pass **unchanged**.
 
 Deployed **alone**, before any todo work touches the player.
 
-- **Layout.** `audiobook/vanilla/` frozen exactly as-is. Source and toolchain in
+- **Layout.** `audiobook/vanilla/` frozen exactly as-is — save `sw.js`, which is
+  framework-agnostic and ships byte-identical to both players, so a worker change
+  is made there and copied by the build (`test/vanilla-retirement.test.mjs`
+  fails if they diverge). See CLAUDE.md. Source and toolchain in
   `audiobook/player-src/` (`package.json`, `tsconfig.json`, `src/`,
   gitignored `node_modules/`); built classic-script artifacts committed to
   `audiobook/player/` (`player.js`, `player.css`, `sw.js`, `icons/`,
@@ -219,7 +222,10 @@ pure UI work.
   UI inside the menu: let an item hand back a DOM node the player appends.
   Absent unless the host passes the option, so static consumers cannot render a
   menu whose every action would 404.
-- **Grants**: DynamoDB rows record the grant and drive the listing, but that is
+- **Grants**: **superseded 2026-08-08 — see "Rejected: signed URLs" below**,
+  which is where the mechanism actually landed; the cookie design here is kept
+  for its reasoning, and the grant cap below is the cookie-era number, not an
+  enforced one. DynamoDB rows record the grant and drive the listing, but that is
   not sufficient — see below. Entitlement cookies move from `Path=/` to
   `Path=/priv/<space_id>/`, one triple per grant, so the browser sends exactly
   the right one per request. Browsers allow ~180 cookies/domain, so the real cap
@@ -292,4 +298,7 @@ if grants ever exceed ~50.
 - Branch per deliverable.
 - Tests before code. Red per assertion, not per file. Revert-and-watch after
   green. Real-browser check on anything with pixels.
-- **Never `git push`.** Hand over the exact commands.
+- **Never `git push`** — the agent, that is. Pushing is the owner's, so they can
+  watch it; the agent prepares the branch and hands over the exact commands. The
+  push itself is not optional: consumers fetch this player at deploy time, so an
+  unpushed change is one karagame's next `deploy.sh` silently overwrites.

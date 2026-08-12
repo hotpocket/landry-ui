@@ -13,6 +13,11 @@ the shell picks the player up.
 - `audiobook/vanilla/` is IIFE JavaScript with no build step, served as-is. It
   is FROZEN — the parity reference and a fallback for consumers that have not
   switched (`audiobook/vanilla/RETIREMENT.md`). Do not fix features there.
+  **One exception, and it is not a loophole:** `sw.js` is framework-agnostic and
+  ships byte-identical to both players — `build.mjs` copies it, and
+  `test/vanilla-retirement.test.mjs` fails if the two ever diverge. A service
+  worker change is therefore made in `audiobook/vanilla/sw.js` and rebuilt, and
+  the commit says so. Nothing else in the directory moves.
 - `audiobook/player/` is the current player: TypeScript + Preact, source in
   `audiobook/player-src/`, built with `node build.mjs`, artifacts committed.
   Editing the source without rebuilding ships the previous player.

@@ -99,6 +99,12 @@ than the redundancy costs.
 
 ### Sharing: why DynamoDB alone could not do it
 
+> **Superseded 2026-08-08.** Signed URLs became the mechanism — see the
+> OVERTURNED note under "Rejected" below, and
+> [[2026-08-08 - visibility-became-a-row-write]]. The path-scoped cookies and the
+> cap of 40 described here are what was believed on 2026-08-07; the record is
+> left standing rather than rewritten.
+
 The Lambda is never in the path of an audio fetch. CloudFront behaviours are
 pinned at S3 prefixes and the only gate is a signed cookie whose policy is
 literally `https://<domain>/priv/<space_id>/*` — and a CloudFront custom policy

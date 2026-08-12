@@ -134,11 +134,32 @@ await page.waitForFunction(() => {
   const a = document.querySelector('audio');
   return a && !a.paused;
 }, null, { timeout: 5000 }).catch(() => {});
-await page.evaluate(() => new Promise((r) => setTimeout(r, 1500)));
+
+// Wait for the CONDITION, not for 1.5 seconds of wall clock. #current-time has
+// one-second granularity, so a fixed window asserted that the audio decoded
+// fast enough to cross a second boundary inside it — and on a loaded machine it
+// does not. Measured: a starved run advanced the element by 7ms in that 1.5s
+// (1.408472 → 1.415929), so the display was still correct at "0:01" and a
+// working player failed. The old escape hatch was `tMoved === tAfter`, exact
+// equality, which 7ms of progress walks straight past.
+//
+// So: give the element as long as it needs to reach the next whole second, and
+// only then require the display to have followed. A dead rAF loop still fails —
+// the second wait is what catches it, and D below re-checks it independently.
+const crossed = await page.waitForFunction(
+  (sec) => {
+    const a = document.querySelector('audio');
+    return !!a && Math.floor(a.currentTime) > sec;
+  }, Math.floor(tAfter), { timeout: 20000 }).then(() => true, () => false);
+const repainted = await page.waitForFunction(
+  (before) => document.querySelector('#current-time').textContent !== before,
+  shown1, { timeout: 5000 }).then(() => true, () => false);
+
 const tMoved = await page.evaluate(() => document.querySelector('audio').currentTime);
 const shown2 = await page.textContent('#current-time');
 check(tMoved > tAfter, `B: audio kept advancing after thaw (${tAfter} → ${tMoved})`);
-check(shown1 !== shown2 || tMoved === tAfter,
+check(crossed, `B: and reached the next whole second (${tAfter} → ${tMoved})`);
+check(repainted,
   `B: the rAF loop repainted the clock after thaw (${shown1} → ${shown2})`);
 
 // --- D/E: returning to an errored element retries --------------------------

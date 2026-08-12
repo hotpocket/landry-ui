@@ -1301,6 +1301,15 @@ export class PlayerEngine {
       // whatever starved it (frozen page, lapsed cookies) has had its chance.
       this.resetRetries();
       this.handleAudioError();
+    } else if (this.currentBook && this.recoveryShouldPlay() && this.audio.paused) {
+      // The same fresh cap for the stall path, which the branch above cannot
+      // reach: a request that hangs sets no MediaError, so a book whose stall
+      // budget was spent against a dead network would stay silent forever —
+      // `stallRecoveries` is otherwise cleared only by a `playing` event, and
+      // there is no playing event to wait for. Re-arm rather than reload: the
+      // watchdog re-checks whether it is really stalled before touching it.
+      this.stallRecoveries = 0;
+      this.armStallWatch();
     }
   }
 

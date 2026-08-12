@@ -44,6 +44,9 @@
 //      every recovery path consults, so a book restarted from the chapter list
 //      while paused must not keep playing with "wants silence" still set — the
 //      next stall would refuse to recover it, silently
+//   H. a stall budget spent against a dead network is re-armed by returning to
+//      visibility — a hung request sets no MediaError, so the error path's
+//      visibility retry never fires and the book would stay silent forever
 
 import { createRequire } from 'module';
 import { execFileSync } from 'child_process';
@@ -427,6 +430,41 @@ const chapter2Requests = () => state.requests.filter((p) => p.endsWith('chapter_
   const next = state.urls.filter((u) => u.includes('chapter_0002')).pop();
   check(!!next && next.includes('Signature=fresh'),
         `G: the next chapter is fetched with the re-signed query (${next})`);
+  await page.context().close();
+}
+
+// --- H: the stall budget is re-armed by returning to visibility -------------
+{
+  state.deny2 = false;
+  state.hang2 = true;
+  const page = await freshPage();
+  await playFirstChapter(page);
+  await page.click('#btn-next');
+
+  // Burn the whole stall cap against a request that never answers. RETRY_MAX is
+  // 3, and each attempt costs one watchdog window.
+  const gaveUp = await page.waitForFunction(() => JSON
+    .parse(localStorage.getItem('rs-diag') || '[]')
+    .some((d) => d.ev === 'gave-up' && d.after === 'stall'),
+    null, { timeout: 15000 }).then(() => true, () => false);
+  check(gaveUp, 'H: the watchdog gives up rather than reloading a dead network forever');
+
+  // The listener's phone comes back with a working network. Nothing errored —
+  // a hung request sets no MediaError — so the error path's visibility retry
+  // does not fire, and only the stall budget stands between here and silence.
+  state.hang2 = false;
+  await fetch(`${origin}/release`);
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    document.dispatchEvent(new Event('visibilitychange'));
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  const recovered = await page.waitForFunction(() => {
+    const a = document.querySelector('audio');
+    return a && /chapter_0002/.test(a.currentSrc) && !a.paused && a.currentTime > 0.1;
+  }, null, { timeout: 15000 }).then(() => true, () => false);
+  check(recovered, 'H: returning to a visible page re-arms the watchdog and the book plays');
   await page.context().close();
 }
 

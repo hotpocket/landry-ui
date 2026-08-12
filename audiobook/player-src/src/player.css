@@ -1,6 +1,33 @@
-/* repo-story player component */
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0f0f0f; color: #e0e0e0; min-height: 100vh; }
+/* repo-story player component
+ *
+ * These two rules used to be global — `*` and bare `body` — so a host page that
+ * merely INCLUDED this stylesheet had its whole document reset and darkened.
+ * That is the opposite of what init({embedded:true}) and .player-embedded-host
+ * are for. Both are now scoped to the player's own root, which init() marks
+ * with .rs-player, and the standalone shell opts back into the page-level
+ * behaviour through .rs-standalone on <body>.
+ *
+ * The reset is scoped, not dropped: it does real work inside the player (the
+ * chapter list is a <ul> and the UA gives it 40px of padding). And .rs-player
+ * has to carry the background and text colour itself — with the body rule gone
+ * on a host page there is nothing left to inherit them from, and the palette
+ * below is built for a dark ground. */
+.rs-player, .rs-player * { margin: 0; padding: 0; box-sizing: border-box; }
+.rs-player { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0f0f0f; color: #e0e0e0; }
+/* Standalone is the DEFAULT, and the negation is why. Every consumer calls
+ * init() from a classic <script> at the bottom of <body>, so a class added by
+ * init() lands one script-execution after the stylesheet — and a paint can
+ * happen in between. Opt-in standalone therefore flashes white on every load of
+ * the shell, which is most consumers. Opt-out standalone flashes dark only on a
+ * page that embeds, which is one, and only until its init() runs.
+ *
+ * A host that will not tolerate even that puts class="rs-embedded-page" on its
+ * own <body> and is never styled at all, with no JavaScript involved.
+ *
+ * margin/padding are here because the old global `*` matched <body> too, and
+ * scoping it quietly handed back the UA's 8px body margin — the whole shell
+ * shifted down by it, which no assertion caught and a screenshot did. */
+body:not(.rs-embedded-page) { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0f0f0f; color: #e0e0e0; min-height: 100vh; }
 
 .library { max-width: 900px; margin: 0 auto; padding: 2rem 1rem; }
 .library h1 { font-size: 1.5rem; font-weight: 300; margin-bottom: 2rem; color: #888; letter-spacing: 0.05em; }

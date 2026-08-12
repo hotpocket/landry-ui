@@ -62,6 +62,16 @@ function init(opts: PlayerOptions): void {
 
   // Marked on the container rather than on #player-view, because the library is
   // a sibling of the player view and needs to respond to embedding too.
+  // player.css scopes its reset and its palette to this class, so the stylesheet
+  // stops at the player instead of restyling the host's whole document.
+  opts.container.classList.add('rs-player');
+  // …and an embedding host takes its page back. Marked here rather than
+  // required in the host's HTML so no consumer has to change anything, and
+  // stated as the negative so the standalone shell — most consumers — is styled
+  // from the stylesheet alone and never flashes unstyled. A host that wants the
+  // guarantee before this line runs can set the class in its own <body>.
+  document.body.classList.toggle('rs-embedded-page', !!opts.embedded);
+
   opts.container.classList.toggle('player-embedded-host', !!opts.embedded);
   opts.container.classList.toggle('player-no-library-heading', chrome.libraryHeading === false);
 

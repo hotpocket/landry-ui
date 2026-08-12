@@ -95,9 +95,26 @@ function BookItem({ book, idx, ...p }: { book: LibraryBook; idx: number } & Libr
 
   return (
     <div class="book-item">
+      {/* Opening a book is the primary action in this view, and it lived on a
+          bare div: no role, no focus, no key handler. The download and menu
+          buttons beside it are real buttons, so tabbing through the library
+          looked like it worked. role+tabIndex rather than a <button> because a
+          button element resets the typography of the title, meta and
+          description inside it and cannot legally contain them. */}
       <div
+        class="book-open"
+        role="button"
+        tabIndex={0}
+        aria-label={`Open ${book.title}`}
         style="flex: 1; cursor: pointer"
         onClick={() => p.onOpen(idx)}
+        onKeyDown={(e: KeyboardEvent) => {
+          // Space scrolls the page by default, which is the wrong answer for
+          // something announced as a button.
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          p.onOpen(idx);
+        }}
       >
         <div class="title">{book.title}</div>
         <div class="meta">

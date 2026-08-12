@@ -23,6 +23,10 @@
 //   F2. clicking the same button again closes it
 //   H. opening the menu does not open the book — the click must not fall
 //      through to the row behind it
+//   I. the row that opens the book is reachable and operable from the keyboard.
+//      The download and menu buttons beside it are real buttons and have always
+//      been focusable, which is exactly why the gap in the row itself survived
+//      manual testing: tabbing through the library looks like it works.
 
 import { createRequire } from 'module';
 import { readFileSync, existsSync } from 'fs';
@@ -149,6 +153,31 @@ await page.click('#book-menu-btn-1');
 await page.waitForTimeout(50);
 const open = await page.$$eval('.book-menu-items', (n) => n.length);
 check(open === 1, `G: only one menu open at a time (${open})`);
+
+// --- I: the book row is keyboard-operable ----------------------------------
+await page.keyboard.press('Escape');
+await page.waitForTimeout(50);
+const row = await page.$('#book-list .book-item .book-open');
+check(!!row, 'I: the row that opens a book is a named, addressable control');
+const semantics = await page.$eval('#book-list .book-item .book-open',
+  (el) => ({ role: el.getAttribute('role'), tab: el.getAttribute('tabindex'), tag: el.tagName }));
+check(semantics.tag === 'BUTTON' || (semantics.role === 'button' && semantics.tab === '0'),
+      `I: it announces itself as a button and takes focus (${JSON.stringify(semantics)})`);
+
+// Operate it the way a keyboard user does, not by synthesising a click.
+await page.$eval('#book-list .book-item .book-open', (el) => el.focus());
+await page.keyboard.press('Enter');
+const openedByEnter = await page.waitForSelector('#player-view.active', { timeout: 5000 })
+  .then(() => true, () => false);
+check(openedByEnter, 'I: Enter on the focused row opens the book');
+
+await page.click('#back-btn');
+await page.waitForSelector('#book-list .book-item .book-open', { state: 'visible' });
+await page.$eval('#book-list .book-item .book-open', (el) => el.focus());
+await page.keyboard.press('Space');
+const openedBySpace = await page.waitForSelector('#player-view.active', { timeout: 5000 })
+  .then(() => true, () => false);
+check(openedBySpace, 'I: Space on the focused row opens the book');
 
 await browser.close();
 server.close();

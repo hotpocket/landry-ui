@@ -118,6 +118,7 @@ export class PlayerEngine {
   // means no loadedmetadata, no playing, no error, and (before this) nobody
   // watching. Armed on a load that wants to play and on 'waiting'.
   private stallTimer: ReturnType<typeof setTimeout> | null = null;
+  private disposed = false;
   private stallArmedAt = 0;
   private stallRecoveries = 0;
   private stallNonce = 0;
@@ -159,10 +160,35 @@ export class PlayerEngine {
     const n = parseInt(store.getItem('rs-textsize-n') ?? '0', 10);
     this.textSize = Number.isNaN(n) || n < TS_MIN || n > TS_MAX ? 0 : n;
 
+    // A host that re-renders constructs another engine into the same container.
+    // The page-level wiring is guarded in start(), but the element and the
+    // animation loop live on the INSTANCE, so an undisposed predecessor keeps a
+    // rAF loop running over detached DOM and an <audio> element that can go on
+    // playing underneath the new one. Vanilla never had this: it was one IIFE
+    // with one element, and re-init was free.
+    activeEngine?.dispose();
+
     this.audio = document.createElement('audio');
     this.audio.preload = 'metadata';
     opts.container.appendChild(this.audio);
     activeEngine = this;
+  }
+
+  /**
+   * Give up everything this engine owns that outlives its DOM. Called only when
+   * a successor replaces it — there is no restart from here.
+   */
+  private dispose(): void {
+    this.disposed = true;          // stops the rAF loop at its next frame
+    this.cancelStallWatch();
+    try {
+      this.audio.pause();
+      // Not just pause: an element left with a src goes on buffering, which on
+      // a metered connection is the part nobody sees.
+      this.audio.removeAttribute('src');
+      this.audio.load();
+    } catch { /* a detached element can refuse both; it is going away anyway */ }
+    this.audio.remove();
   }
 
   // ---------------------------------------------------------------- clock
@@ -890,6 +916,9 @@ export class PlayerEngine {
   // ------------------------------------------------------------- the loop
 
   private tick = (): void => {
+    // Before the re-schedule, not after: a disposed engine must stop asking for
+    // frames, not merely stop doing work in them.
+    if (this.disposed) return;
     requestAnimationFrame(this.tick);
     if (!this.currentBook) return;
 

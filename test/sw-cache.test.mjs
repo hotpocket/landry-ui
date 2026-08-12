@@ -14,6 +14,11 @@
 //      passed, newest survive
 //   D. /api/* requests bypass the service worker's caches entirely
 //   E. the shell branch never caches a non-200 response
+//   F. a Range that starts past the end of a cached entry is refused with 416,
+//      not answered with a malformed 206. Clamping only the END lets `start`
+//      overtake it, and the response then carries a negative Content-Length and
+//      a backwards Content-Range — which the media element, not this code, has
+//      to make sense of
 import { createRequire } from 'module';
 import { execFileSync } from 'child_process';
 import { readFileSync, existsSync } from 'fs';
@@ -186,6 +191,37 @@ async function pollCache(name, want, timeoutMs) {
   check(body === 'OFFLINE-COPY', `C3: offline download preferred over stream copy ("${body}")`);
   await page.evaluate(async () => {
     (await caches.open('audiobook-audio')).delete(new Request(location.origin + '/audio/fake_77.m4a'));
+  });
+}
+
+// --- F: a range past the end of a cached entry is refused ------------------
+{
+  await page.evaluate(async () => {
+    const stream = await caches.open('audiobook-stream');
+    await stream.put(new Request(location.origin + '/audio/fake_88.m4a'),
+      new Response('0123456789', { headers: { 'Content-Type': 'audio/mp4' } }));
+  });
+  // Ten bytes cached, and a seek that lands at 5000 — what a stale cache entry
+  // for a file that has since grown produces.
+  const past = await page.evaluate(() =>
+    fetch('/audio/fake_88.m4a', { headers: { Range: 'bytes=5000-6000' } })
+      .then((r) => ({ status: r.status, range: r.headers.get('Content-Range'),
+                      len: r.headers.get('Content-Length') })));
+  check(past.status === 416,
+        `F: a start past the end is refused (${past.status}, Content-Range "${past.range}")`);
+  check(!past.len || Number(past.len) >= 0,
+        `F: and carries no negative Content-Length (${past.len})`);
+
+  // The satisfiable neighbour must be untouched by the guard: an open-ended
+  // range at the last byte is legal and is what a seek to the end of a chapter
+  // actually sends.
+  const lastByte = await page.evaluate(() =>
+    fetch('/audio/fake_88.m4a', { headers: { Range: 'bytes=9-' } })
+      .then((r) => Promise.all([r.status, r.text()])));
+  check(lastByte[0] === 206 && lastByte[1] === '9',
+        `F: the last byte is still servable (${lastByte[0]} "${lastByte[1]}")`);
+  await page.evaluate(async () => {
+    (await caches.open('audiobook-stream')).delete(new Request(location.origin + '/audio/fake_88.m4a'));
   });
 }
 

@@ -116,6 +116,20 @@ function serveRange(request, cached) {
     var end = match[2] ? parseInt(match[2], 10) : blob.size - 1;
     end = Math.min(end, blob.size - 1);
 
+    // Only `end` is clamped, so `start` can overtake it — a seek into a cached
+    // entry that is shorter than the file it stands for, which is what a stale
+    // cache of a re-encoded chapter looks like. The slice would come back empty
+    // while the headers claimed 'bytes 5000-4999/4000' and a negative
+    // Content-Length, leaving the media element to interpret a malformed 206.
+    // 416 says the same thing in a way it already knows how to handle.
+    if (!(start >= 0) || start > end) {
+      return new Response(null, {
+        status: 416,
+        statusText: 'Range Not Satisfiable',
+        headers: { 'Content-Range': 'bytes */' + blob.size }
+      });
+    }
+
     return new Response(blob.slice(start, end + 1), {
       status: 206,
       statusText: 'Partial Content',

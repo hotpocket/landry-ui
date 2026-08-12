@@ -62,6 +62,13 @@ export class TranscriptLoader {
           const books = (data as TranscriptData).books;
           if (Array.isArray(books)) {
             for (const b of books) this.src.loaded[b.slug] = b;
+            // A library-wide file need not mention the book that was asked for
+            // — an unpublished book behind a shared transcripts.json produces
+            // exactly that. Without this the slug is left neither loaded nor
+            // failed, and `ensure` refetches the same URL on every keystroke
+            // for the rest of the session: the 403-per-character defect the
+            // `failed` set exists to stop, arriving through a 200 instead.
+            if (!this.src.loaded[slug]) this.failed.add(slug);
           } else {
             this.src.loaded[slug] = data as BookTranscript;
           }

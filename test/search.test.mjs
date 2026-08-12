@@ -20,6 +20,10 @@
 //   G. choosing a result opens that book and seeks — and only then is audio
 //      fetched
 //   H. book titles match too, from the payload already in memory
+//   I. a library-wide payload that omits the requested book is still resolved,
+//      so the fetch is not repeated once per keystroke for the rest of the
+//      session — the same 403-per-character defect the `failed` set exists to
+//      stop, arriving through a 200 instead
 
 import { createRequire } from 'module';
 import { readFileSync, existsSync } from 'fs';
@@ -47,9 +51,14 @@ const MIME = { html: 'text/html', js: 'text/javascript', css: 'text/css',
 
 // Two books, each with its own transcript URL, so "loaded" and "not loaded" are
 // genuinely different states. Chapter audio is real fixture audio.
+// gamma is the third state, and the one that used to have no name: its URL
+// answers 200 with a library-wide payload that does not mention gamma. Real
+// sites produce it whenever a book is unpublished behind a shared transcripts
+// file — a success that resolves nothing.
 const BOOKS = [
   { slug: 'alpha', title: 'Alpha Book' },
   { slug: 'beta', title: 'Beta Book' },
+  { slug: 'gamma', title: 'Gamma Book' },
 ];
 const TRANSCRIPTS = {
   'alpha.json': { books: [{ slug: 'alpha', chapters: [
@@ -63,6 +72,8 @@ const TRANSCRIPTS = {
       { index: 0, text: 'A beta dragon slept in the valley.', start: 0, end: 2 },
     ] },
   ] }] },
+  // No 'gamma' entry: the payload parses, and the book asked for is not in it.
+  'gamma.json': { books: [{ slug: 'delta', chapters: [] }] },
 };
 
 const requests = [];
@@ -72,7 +83,7 @@ const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://x').pathname;
   requests.push(path);
 
-  if (path === '/alpha.json' || path === '/beta.json') {
+  if (path === '/alpha.json' || path === '/beta.json' || path === '/gamma.json') {
     if (path === '/beta.json' && holdBeta) await holdBeta;
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(TRANSCRIPTS[path.slice(1)]));
@@ -201,6 +212,21 @@ check(audioRequests().length > audioBeforeClick,
       'G: audio is fetched only once a result is chosen');
 const openTitle = await page.textContent('#book-title');
 check(/beta/i.test(openTitle || ''), `G2: it opened the right book ("${openTitle}")`);
+
+// --- I: a 200 that resolves nothing is still resolved -----------------------
+// Typing is the pressure here: `ensure` runs per keystroke, so a slug left
+// neither loaded nor failed refetches for every character the reader types.
+await page.click('#back-btn');                   // G left the player view open
+await page.waitForSelector('#search-input', { state: 'visible' });
+await page.fill('#search-input', '');
+const gammaBefore = requests.filter((p) => p === '/gamma.json').length;
+for (const q of ['drag', 'drago', 'dragon', 'dragons', 'dragon s']) {
+  await page.fill('#search-input', q);
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 250)));
+}
+const gammaAfter = requests.filter((p) => p === '/gamma.json').length;
+check(gammaAfter - gammaBefore === 0,
+      `I: a payload missing the book is not refetched per keystroke (${gammaAfter - gammaBefore} refetches)`);
 
 await browser.close();
 server.close();

@@ -617,6 +617,12 @@ export class PlayerEngine {
     this.userPaused = true;
     this.cancelScenePause();
     this.resetRetries();     // scheduled work is cancelled, not merely ignored
+    // …and the watchdog is scheduled work too. It already declines while
+    // `userPaused` is set — shouldRecoverFromStall reads it, and
+    // playback-recovery case D asserts no reload storm behind a stopped book —
+    // so this changes no behaviour and gets no test of its own: removing it
+    // cannot make anything go red. It is here because the line above claims it.
+    this.cancelStallWatch();
     this.audio.pause();
   }
 

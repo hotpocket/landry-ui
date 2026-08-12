@@ -181,6 +181,12 @@ export class PlayerEngine {
   private dispose(): void {
     this.disposed = true;          // stops the rAF loop at its next frame
     this.cancelStallWatch();
+    // The scene-break hold is a pending setTimeout whose callback calls
+    // audio.play(). Unsourcing below already makes that call reject harmlessly,
+    // so this closes no visible hole — it stops a disposed engine holding a
+    // live timer, and stops the unsourcing from being the only thing standing
+    // between a scene hold and an orphan that resumes itself.
+    this.cancelScenePause();
     try {
       this.audio.pause();
       // Not just pause: an element left with a src goes on buffering, which on

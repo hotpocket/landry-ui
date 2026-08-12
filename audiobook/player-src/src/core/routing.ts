@@ -56,5 +56,13 @@ export function hashForBook(books: BookIdentity[], idx: number | null): string {
 /** The slug a hash names, or null for the library. */
 export function slugFromHash(hash: string): string | null {
   const m = /^#\/(.+)$/.exec(hash || '');
-  return m ? decodeURIComponent(m[1]) : null;
+  if (!m) return null;
+  // A hand-edited or truncated hash ('#/%') makes decodeURIComponent throw.
+  // start() calls this before the first book opens, so an escaping URIError is
+  // a blank player rather than a bad route — the library is the honest answer.
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return null;
+  }
 }

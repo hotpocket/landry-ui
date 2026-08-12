@@ -19,6 +19,8 @@
 //   F. lookup by slug returns -1 for unknown slugs rather than a false 0
 //   G. round-trip: every book in a library resolves back to its own index
 //   H. the hash for a book is '#/<slug>', and the library is the empty hash
+//   I. a malformed hash reads as the library rather than throwing — the boot
+//      path calls slugFromHash, so a URIError there takes the whole player down
 
 import assert from 'node:assert';
 import { test } from 'node:test';
@@ -76,6 +78,14 @@ test('H. hash form is #/<slug>; library is empty', () => {
   assert.equal(hashForBook(books, null), '');
   assert.equal(slugFromHash('#/repo-story'), 'repo-story');
   assert.equal(slugFromHash(''), null);
+});
+
+test('I. a malformed percent escape reads as the library, not a throw', () => {
+  // decodeURIComponent('%') throws URIError. slugFromHash runs in start() before
+  // the first book opens, so an unthrown one is a blank page, not a bad route.
+  for (const bad of ['#/%', '#/%zz', '#/a%', '#/%E0%A4%A']) {
+    assert.equal(slugFromHash(bad), null, `${bad} did not degrade to the library`);
+  }
 });
 
 test('H2. slugs survive URL encoding round-trip', () => {

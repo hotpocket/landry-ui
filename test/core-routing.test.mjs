@@ -21,11 +21,18 @@
 //   H. the hash for a book is '#/<slug>', and the library is the empty hash
 //   I. a malformed hash reads as the library rather than throwing — the boot
 //      path calls slugFromHash, so a URIError there takes the whole player down
+//   J. collidingSlugs names books that resolve to the same hash. Truncation at
+//      MAX_SLUG can do it to two titles that differ only after character 60,
+//      and bookIdxFromSlug then sends both hashes to the first book — the second
+//      is unreachable by URL, with nothing said. NOT fixed by making the slug
+//      unique: a content suffix would change the slug of every long-titled book
+//      that already exists, orphaning live links and stored positions, which is
+//      the property this file exists to protect. Detected, and left to the human.
 
 import assert from 'node:assert';
 import { test } from 'node:test';
 import {
-  slugify, bookSlug, bookIdxFromSlug, hashForBook, slugFromHash,
+  slugify, bookSlug, bookIdxFromSlug, hashForBook, slugFromHash, collidingSlugs,
 } from '../audiobook/player-src/src/core/routing.ts';
 
 const books = [
@@ -93,4 +100,26 @@ test('H2. slugs survive URL encoding round-trip', () => {
   // way out; decoding must return the same slug or lookup fails after a reload.
   const s = bookSlug(books[2]);
   assert.equal(slugFromHash(hashForBook(books, 2)), s);
+});
+
+test('J. two titles that differ only past the cap are named as colliding', () => {
+  assert.deepEqual(collidingSlugs(books), [], 'a clean library reports nothing');
+
+  // 60 identical characters, then a difference the slug cannot carry.
+  const stem = 'the-same-opening-sixty-characters-of-a-very-long-book-title-';
+  assert.equal(stem.length, 60);
+  const pair = [{ title: stem + 'Volume One' }, { title: stem + 'Volume Two' }];
+  assert.equal(slugify(pair[0].title), slugify(pair[1].title), 'the premise: the slugs are equal');
+  assert.deepEqual(collidingSlugs(pair), [slugify(pair[0].title)]);
+
+  // And the damage it stands for: the second book is unreachable.
+  assert.equal(bookIdxFromSlug(pair, bookSlug(pair[1])), 0);
+
+  // An explicit duplicate slug counts too — same outcome, different cause.
+  assert.deepEqual(collidingSlugs([{ slug: 'a' }, { slug: 'a' }, { slug: 'b' }]), ['a']);
+
+  // Each colliding slug is named once, however many books land on it.
+  assert.deepEqual(collidingSlugs([{ slug: 'a' }, { slug: 'a' }, { slug: 'a' }]), ['a']);
+
+  assert.deepEqual(collidingSlugs([]), []);
 });

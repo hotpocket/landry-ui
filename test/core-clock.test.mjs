@@ -22,12 +22,17 @@
 //   H. findChapterIdxAt clamps rather than throwing outside the book
 //   I. bookHasSummaries is true when ANY chapter carries one — the toggle is
 //      offered for partially-summarized books
+//   J. nonPositionalChapterId names the first chapter whose `id` is not its
+//      position. The whole player indexes by `ch.id` — summary starts here, and
+//      the chapter rows, progress bars and transcript ids in the engine — so
+//      `id === position` is a load-bearing invariant that nothing enforced. A
+//      manifest that breaks it seeks to the wrong place and says nothing.
 
 import assert from 'node:assert';
 import { test } from 'node:test';
 import {
   chapterStart, chapterDuration, summaryStarts, bookDuration,
-  findChapterIdxAt, bookHasSummaries,
+  findChapterIdxAt, bookHasSummaries, nonPositionalChapterId,
 } from '../audiobook/player-src/src/core/clock.ts';
 
 // Three chapters, 10/20/30s full. Chapter 2 has no summary track.
@@ -106,4 +111,31 @@ test('I. a partially-summarized book still offers the toggle', () => {
   assert.equal(bookHasSummaries(book), true);
   assert.equal(bookHasSummaries(spans), false);
   assert.equal(bookHasSummaries(null), false);
+});
+
+test('J. a non-positional chapter id is named, and a correct book is not', () => {
+  assert.equal(nonPositionalChapterId(book), -1);
+  assert.equal(nonPositionalChapterId(spans), -1);
+
+  // One-based ids, the likeliest way a manifest producer gets this wrong.
+  const oneBased = { ...book, chapters: book.chapters.map((c, i) => ({ ...c, id: i + 1 })) };
+  assert.equal(nonPositionalChapterId(oneBased), 0, 'a 1-based manifest is not flagged');
+
+  // And a book that is right until it is not: only the first offender is named,
+  // because one warning per book is the point, not one per chapter.
+  const late = { ...book, chapters: book.chapters.map((c, i) => ({ ...c, id: i === 2 ? 9 : i })) };
+  assert.equal(nonPositionalChapterId(late), 2);
+
+  assert.equal(nonPositionalChapterId(null), -1, 'no book is not a broken book');
+  assert.equal(nonPositionalChapterId({ chapters: [] }), -1);
+});
+
+test('J2. the invariant J guards is the one chapterStart actually relies on', () => {
+  // Without this, J is a test of a predicate nobody needs. A 1-based manifest
+  // must really seek to the wrong place on the summary clock.
+  const oneBased = { ...book, chapters: book.chapters.map((c, i) => ({ ...c, id: i + 1 })) };
+  const ch0 = oneBased.chapters[0];
+  assert.equal(chapterStart(book, book.chapters[0], true), 0);
+  assert.notEqual(chapterStart(oneBased, ch0, true), 0,
+                  'a 1-based id read as a position would have to be harmless for J to be pointless');
 });

@@ -18,8 +18,9 @@ import type { PlayerOptions } from '../index.tsx';
 import {
   type Book, type Chapter,
   chapterStart, chapterDuration, bookDuration, findChapterIdxAt, bookHasSummaries,
+  nonPositionalChapterId,
 } from '../core/clock.ts';
-import { bookSlug, bookIdxFromSlug, hashForBook, slugFromHash } from '../core/routing.ts';
+import { bookSlug, bookIdxFromSlug, hashForBook, slugFromHash, collidingSlugs } from '../core/routing.ts';
 import { readProgress, writeProgress, readLastBook, type KeyValueStore } from '../core/progress.ts';
 import {
   bookTranscript, chapterTranscript, chunksFor, findChunkAt,
@@ -1215,8 +1216,40 @@ export class PlayerEngine {
 
   // ----------------------------------------------------------------- wire
 
+  /**
+   * The two library invariants the player relies on and cannot enforce.
+   *
+   * Warned, not repaired, and for different reasons in each case — see
+   * `nonPositionalChapterId` and `collidingSlugs` in core/. console.warn rather
+   * than the rs-diag ring buffer on purpose: rs-diag is for failures on a phone
+   * with nobody watching, and a bad manifest is deterministic and fires on the
+   * first load in any browser, where whoever built it will be looking.
+   */
+  private checkManifest(): void {
+    for (const book of this.books) {
+      const bad = nonPositionalChapterId(book);
+      if (bad >= 0) {
+        console.warn(
+          `[player] "${book.title ?? bookSlug(book)}": chapter at position ${bad} has ` +
+          `id ${book.chapters[bad]?.id}. Chapter ids are read as positions — summary ` +
+          `starts, chapter rows, progress bars and transcript ids all index by them — ` +
+          `so this book will seek and highlight the wrong chapter. Renumber from 0 in ` +
+          `the manifest.`);
+      }
+    }
+    for (const slug of collidingSlugs(this.books)) {
+      console.warn(
+        `[player] more than one book resolves to the slug "${slug}", so #/${slug} ` +
+        `opens only the first and the rest are unreachable by URL. Titles longer ` +
+        `than 60 characters can collide after truncation. Give them distinct ` +
+        `\`slug\` values in the manifest — deriving one here would change the slug ` +
+        `of every long-titled book that already exists.`);
+    }
+  }
+
   start(): void {
     const r = this.refs;
+    this.checkManifest();
     this.loadTranscripts(this.opts.transcriptUrl);
 
     r.backBtn.current?.addEventListener('click', () => this.showLibrary());

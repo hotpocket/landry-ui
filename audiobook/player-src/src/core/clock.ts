@@ -57,6 +57,29 @@ export function summaryStarts(book: Book): number[] {
 }
 
 /**
+ * Position of the first chapter whose `id` is not its index, or -1.
+ *
+ * `chapterStart` below reads `ch.id` as a position into `summaryStarts`, and so
+ * does the engine — chapter rows, per-chapter progress bars and scrubs, the
+ * active-chapter highlight, and the `tc-<id+1>-<n>` transcript element ids. That
+ * makes `id === position` load-bearing across the whole player while `Chapter.id`
+ * is typed as any number, and nothing enforced it.
+ *
+ * Detected rather than corrected. Renumbering would mean mutating book objects
+ * the host still owns — books.landry.bot re-signs the very same objects in
+ * place — and a silent repair of a manifest that is wrong somewhere else is
+ * worse than a manifest that is wrong loudly.
+ */
+export function nonPositionalChapterId(book: Book | null | undefined): number {
+  const chapters = book?.chapters;
+  if (!chapters) return -1;
+  for (let i = 0; i < chapters.length; i++) {
+    if (chapters[i].id !== i) return i;
+  }
+  return -1;
+}
+
+/**
  * Book-relative start of one chapter on the active clock. Full starts are
  * precomputed upstream and carried on the chapter; summary starts are derived
  * here because only the client knows which chapters have summary tracks.

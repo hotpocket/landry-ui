@@ -47,6 +47,33 @@ export function bookIdxFromSlug(books: BookIdentity[], slug: string | null | und
   return -1;
 }
 
+/**
+ * Slugs that more than one book in this library resolves to, each named once.
+ *
+ * Two paths reach it: an explicit duplicate slug in the manifest, and — the one
+ * that is invisible from the titles — two titles that differ only after
+ * MAX_SLUG characters, which `slugify` truncates into the same string.
+ * `bookIdxFromSlug` returns the first match, so every hash for the pair opens
+ * the first book and the second is unreachable by URL.
+ *
+ * Reported, deliberately not repaired. Appending a content digest would make
+ * the slug unique and change it for every long-titled book that already exists,
+ * orphaning live links and stored positions — trading a rare failure for a
+ * certain one, against the stability this module is built around. A library
+ * that hits this wants a hand-picked `slug` in the manifest, which is a
+ * decision, not a fallback.
+ */
+export function collidingSlugs(books: BookIdentity[]): string[] {
+  const seen = new Set<string>();
+  const dupes = new Set<string>();
+  for (const b of books) {
+    const s = bookSlug(b);
+    if (seen.has(s)) dupes.add(s);
+    seen.add(s);
+  }
+  return [...dupes];
+}
+
 /** The hash for a book index; the empty string means the library. */
 export function hashForBook(books: BookIdentity[], idx: number | null): string {
   if (idx == null) return '';

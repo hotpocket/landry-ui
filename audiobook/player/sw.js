@@ -240,6 +240,121 @@ function cacheKeyUrl(url) {
   }
 }
 
+// --- repairing an expired signature -----------------------------------------
+//
+// A signed media URL carries its own expiry, and the page cannot rewrite a URL
+// a fetch is already in flight on. When it lapses, every request that reaches
+// the network 403s — and the ones that reach the network are precisely the ones
+// nothing else can see: a prefetch, a chapter past the cache, a mid-file seek
+// issued by the media element itself. On 2026-08-13 that produced ten hours of
+// 403s behind a perfectly healthy session, because CloudFront uses the URL
+// signature and IGNORES the cookies when a request carries both — so the thing
+// being refreshed could not have helped.
+//
+// So the worker repairs it here, where every one of those requests passes:
+// mint a fresh signature for the book the path names, retry once.
+//
+// The path shape is the gate. This worker ships byte-identical to sites that
+// serve their audio unsigned and have no such API (see RETIREMENT.md), and a
+// 403 there must stay a 403 rather than becoming a request to a route that
+// does not exist.
+var SIGNED_PATH = /^\/priv\/([0-9a-zA-Z_-]{1,64})\/([0-9a-zA-Z_-]{1,64})\//;
+
+// The last mint that worked, per book, and the mint currently in flight. Both
+// live in worker memory: a killed worker just starts over, and the cost of
+// starting over is one extra API call.
+var freshQuery = {};
+var minting = {};
+
+function mintQuery(bookId) {
+  if (!minting[bookId]) {
+    // credentials matter: the route authorizes with the session cookie, and a
+    // fetch from a worker does not send one unless asked.
+    minting[bookId] = fetch('/api/books/' + encodeURIComponent(bookId) + '/media',
+                            { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (body) { return (body && body.media_query) || null; })
+      .catch(function () { return null; })   // offline: nothing to repair with
+      .then(function (query) {
+        delete minting[bookId];
+        if (query) freshQuery[bookId] = query;
+        return query;
+      });
+  }
+  return minting[bookId];
+}
+
+function withQuery(url, query) {
+  var u = new URL(url);
+  SIGNED_PARAMS.forEach(function (p) { u.searchParams.delete(p); });
+  new URLSearchParams(query).forEach(function (v, k) { u.searchParams.set(k, v); });
+  return u.href;
+}
+
+// The same request, re-aimed at a URL. Mirrors fullRequest: a Request cannot
+// have its url reassigned, so everything that matters is copied across.
+function reaimed(req, url) {
+  var headers = new Headers();
+  req.headers.forEach(function (v, k) { headers.append(k, v); });
+  return new Request(url, {
+    method: req.method, headers: headers, mode: req.mode,
+    credentials: req.credentials, cache: 'no-store', redirect: req.redirect,
+  });
+}
+
+/**
+ * fetch(), repairing the signature when the edge refuses it.
+ *
+ * At most one MINT per request, and never a retry of a URL that has just been
+ * refused. A freshly minted signature that is also refused means the
+ * entitlement is gone rather than expired — the book was unshared, or made
+ * private — and reloading that is a spin against a wall.
+ */
+function fetchSigned(req) {
+  return fetch(req).then(function (response) {
+    if (!response || response.status !== 403) return response;
+    var m = SIGNED_PATH.exec(new URL(req.url).pathname);
+    if (!m) return response;
+    return repairSignature(req, m[2], response);
+  });
+}
+
+function retryWith(req, query, denied) {
+  var url = withQuery(req.url, query);
+  // Reloading the URL that was just refused is not a retry, it is the same
+  // request again — and the network stack may coalesce it onto the one that
+  // already failed, so it would not even reach the edge.
+  if (url === req.url) return Promise.resolve(denied);
+  return fetch(reaimed(req, url));
+}
+
+function repairSignature(req, bookId, denied) {
+  // The mint some other request already paid for. This is the burst case: a
+  // chapter boundary and a prefetch are denied together, and both reaching for
+  // the API would double the load at the moment the radio is already starving.
+  var known = freshQuery[bookId];
+  if (!known) return mintAndRetry(req, bookId, denied);
+
+  return retryWith(req, known, denied).then(function (r) {
+    if (r.status !== 403) return r;
+    // The remembered one is refused too: it has expired in its turn, or the
+    // library changed underneath it. Forget it and ask once.
+    if (freshQuery[bookId] === known) delete freshQuery[bookId];
+    return mintAndRetry(req, bookId, denied);
+  });
+}
+
+function mintAndRetry(req, bookId, denied) {
+  return mintQuery(bookId).then(function (query) {
+    if (!query) return denied;              // offline, or a book we may not read
+    // A mint that is refused is forgotten in ONE place — repairSignature, on
+    // the next request that runs into it. Forgetting it here as well only
+    // moves which request pays for the discovery, and a second copy of the
+    // rule is a second thing that can drift from it.
+    return retryWith(req, query, denied);
+  });
+}
+
 function audioResponse(e) {
   var keyReq = new Request(cacheKeyUrl(e.request.url));
   return Promise.all([caches.open(AUDIO_CACHE), caches.open(STREAM_CACHE)])
@@ -260,7 +375,7 @@ function audioResponse(e) {
           // A mid-file seek into an uncached chapter: pass it straight
           // through. Buffering the whole file first would stall the seek,
           // and a 206 must not be cached as if it were the full body.
-          return fetch(e.request);
+          return fetchSigned(e.request);
         }
 
         // First request for the chapter. Return the network response AS A
@@ -271,7 +386,7 @@ function audioResponse(e) {
         // body). The cache copy fills in the background; a put that fails
         // (quota) triggers an eviction pass so the cache heals rather than
         // silently dying full.
-        return fetch(fullRequest(e.request)).then(function (response) {
+        return fetchSigned(fullRequest(e.request)).then(function (response) {
           if (!response || response.status !== 200) return response;  // errors are never cached
           var copy = response.clone();
           e.waitUntil(

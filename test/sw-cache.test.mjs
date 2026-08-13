@@ -14,6 +14,12 @@
 //      passed, newest survive
 //   D. /api/* requests bypass the service worker's caches entirely
 //   E. the shell branch never caches a non-200 response
+//   G. a 403 on signed media is repaired in place: the worker mints a fresh
+//      signature and retries, once. The signature lives in the URL the audio
+//      element is already using, and the page cannot rewrite a URL a fetch is
+//      already in flight on — this is the only layer that sees the prefetch
+//      and the mid-file seek at all, which are exactly the requests the
+//      player's own recovery never gets told about
 //   F. a Range that starts past the end of a cached entry is refused with 416,
 //      not answered with a malformed 206. Clamping only the END lets `start`
 //      overtake it, and the response then carries a negative Content-Length and
@@ -40,12 +46,55 @@ const ok = (m) => { pass++; console.log(`  ok: ${m}`); };
 const bad = (m) => { fail++; console.log(`FAIL: ${m}`); };
 const check = (c, m) => (c ? ok(m) : bad(m));
 
-const state = { deny1: false };
+// `sig` is the signature the origin will accept right now; anything else 403s,
+// which is what an expired one does. `mediaCalls` counts re-mints, because
+// "one API call for a burst of denied chapters" is half the contract.
+const state = { deny1: false, sig: 'good-1', mediaCalls: 0, mediaStatus: 200,
+                mintDenied: false, denyAll: false, audioHits: 0 };
+const SPACE = 'a'.repeat(16);
+const BOOK = 'bk1';
 const MIME = { html: 'text/html', js: 'text/javascript', css: 'text/css',
                m4a: 'audio/mp4', json: 'application/json', webmanifest: 'application/json' };
 
 const server = createServer((req, res) => {
-  const path = new URL(req.url, 'http://x').pathname;
+  const url = new URL(req.url, 'http://x');
+  const path = url.pathname;
+
+  // The API that re-mints a signature for one book.
+  const mint = path.match(/^\/api\/books\/([^/]+)\/media$/);
+  if (mint) {
+    state.mediaCalls++;
+    if (state.mediaStatus !== 200) {
+      res.writeHead(state.mediaStatus, { 'content-type': 'application/json' });
+      res.end('{"error":"no such book"}');
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      // A mint that is itself refused, for the case where re-signing cannot
+      // help — an entitlement that is genuinely gone, not merely expired.
+      media_query: `Policy=p&Signature=${state.mintDenied ? 'stale' : state.sig}&Key-Pair-Id=KP`,
+      media_expires_at: Math.floor(Date.now() / 1000) + 43200,
+    }));
+    return;
+  }
+
+  // Signed media, shaped exactly like production: /priv/<space>/<book>/...
+  const signed = path.match(/^\/priv\/([^/]+)\/([^/]+)\/audio\/([^/]+)$/);
+  if (signed) {
+    state.audioHits++;
+    if (state.denyAll || url.searchParams.get('Signature') !== state.sig) {
+      res.writeHead(403, { 'content-type': 'application/xml' });
+      res.end('<Error><Code>AccessDenied</Code></Error>');
+      return;
+    }
+    const body = 'signed-audio-' + signed[3];
+    res.writeHead(200, { 'content-type': 'audio/mp4', 'accept-ranges': 'bytes',
+                         'content-length': body.length });
+    res.end(body);
+    return;
+  }
+
   if (path.startsWith('/api/')) {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end('{"ok":true}');
@@ -223,6 +272,124 @@ async function pollCache(name, want, timeoutMs) {
   await page.evaluate(async () => {
     (await caches.open('audiobook-stream')).delete(new Request(location.origin + '/audio/fake_88.m4a'));
   });
+}
+
+// --- G: an expired signature is repaired at the worker, once ---------------
+//
+// The failure this exists for, from a real listener on 2026-08-13: the session
+// alive, the cookies fresh, and every uncached chapter 403 because the
+// signature baked into the URL had died ten hours earlier. CloudFront uses the
+// URL signature and ignores the cookies when both are present, so nothing the
+// page could refresh was going to help.
+{
+  const chapter = (n, q) =>
+    `/priv/${SPACE}/${BOOK}/audio/chapter_${n}.m4a?Policy=p&Signature=${q}&Key-Pair-Id=KP`;
+  const get = (u, init) => page.evaluate(([url, i]) =>
+    fetch(url, i).then((r) => Promise.all([r.status, r.text()])), [u, init || null]);
+
+  // G1: a stale signature is replaced and the chapter arrives.
+  {
+    await page.evaluate(() => caches.delete('audiobook-stream'));
+    state.sig = 'good-1'; state.mediaCalls = 0;
+    const [status, body] = await get(chapter('0101', 'expired'));
+    check(status === 200, `G: an expired signature is re-minted and retried (got ${status})`);
+    check(body === 'signed-audio-chapter_0101.m4a', `G: with the real bytes ("${body}")`);
+    check(state.mediaCalls === 1, `G: one re-mint (${state.mediaCalls})`);
+
+    // And the mint is remembered: the NEXT chapter to run into the same dead
+    // signature — minutes later, at the next boundary, long after the first
+    // mint resolved — reuses it. Re-minting per chapter would put an API call
+    // between every chapter of a 1,100-chapter book for the rest of the listen.
+    const [next] = await get(chapter('0102', 'expired'));
+    check(next === 200, `G: a later chapter recovers too (got ${next})`);
+    check(state.mediaCalls === 1,
+          `G: on the mint already paid for, not a new one (${state.mediaCalls})`);
+  }
+
+  // G2: a burst of denied chapters is ONE re-mint. A chapter boundary and a
+  // prefetch fail together, and a mint per denied request would hammer the API
+  // at the exact moment the radio is already struggling.
+  {
+    await page.evaluate(() => caches.delete('audiobook-stream'));
+    state.sig = 'good-2'; state.mediaCalls = 0;
+    const many = await page.evaluate(([space, book]) => Promise.all(
+      ['0201', '0202', '0203', '0204'].map((n) =>
+        fetch(`/priv/${space}/${book}/audio/chapter_${n}.m4a?Policy=p&Signature=expired&Key-Pair-Id=KP`)
+          .then((r) => r.status))), [SPACE, BOOK]);
+    check(many.every((s) => s === 200), `G: every denied chapter recovers (${many.join(',')})`);
+    check(state.mediaCalls === 1,
+          `G: four denials, one re-mint (${state.mediaCalls})`);
+  }
+
+  // G3: a mid-file seek — the request the player's own recovery never sees,
+  // because it is issued by the media element inside a chapter already playing.
+  {
+    await page.evaluate(() => caches.delete('audiobook-stream'));
+    state.sig = 'good-3'; state.mediaCalls = 0;
+    const [status] = await get(chapter('0301', 'expired'), { headers: { Range: 'bytes=5-' } });
+    check(status === 200 || status === 206,
+          `G: a mid-file seek is re-signed too (got ${status})`);
+  }
+
+  // G4: the retry happens once. A signature that is refused even when fresh is
+  // an entitlement that is gone, and reloading it forever is a spin.
+  {
+    await page.evaluate(() => caches.delete('audiobook-stream'));
+    state.sig = 'good-4'; state.mintDenied = true; state.mediaCalls = 0;
+    const [status] = await get(chapter('0401', 'expired'));
+    check(status === 403, `G: a mint that is also refused surfaces the 403 (got ${status})`);
+    check(state.mediaCalls <= 1, `G: and does not loop (${state.mediaCalls} re-mints)`);
+    state.mintDenied = false;
+  }
+
+  // G5: a book the API will not sign — the reader lost access, or it is gone.
+  {
+    await page.evaluate(() => caches.delete('audiobook-stream'));
+    state.sig = 'good-5'; state.mediaStatus = 404; state.mediaCalls = 0;
+    const [status] = await get(chapter('0501', 'expired'));
+    check(status === 403, `G: an unsignable book keeps its 403 (got ${status})`);
+    state.mediaStatus = 200;
+  }
+
+  // G6: this worker ships byte-identical to sites that serve audio unsigned
+  // and have no such API. A 403 that is not signed media must not go asking.
+  {
+    await page.evaluate(() => caches.delete('audiobook-stream'));
+    state.deny1 = true; state.mediaCalls = 0;
+    const [status] = await get('/audio/chapter_0001.m4a');
+    check(status === 403, `G: an unsigned 403 is passed through (got ${status})`);
+    check(state.mediaCalls === 0,
+          `G: and asks no API that host does not have (${state.mediaCalls} calls)`);
+    state.deny1 = false;
+  }
+
+  // G8: when the API hands back the signature the URL already carries, there
+  // is nothing to retry. Re-issuing an identical URL is not a retry — the
+  // network stack coalesces it onto the request that already failed, which is
+  // the same trap the stall watchdog hit and why it appends `rsr`.
+  {
+    await page.evaluate(() => caches.delete('audiobook-stream'));
+    state.sig = 'same-sig'; state.denyAll = true;
+    state.mediaCalls = 0; state.audioHits = 0;
+    const [status] = await get(chapter('0801', 'same-sig'));
+    check(status === 403, `G: an unrepairable 403 stays a 403 (got ${status})`);
+    check(state.audioHits === 1,
+          `G: and the identical URL is not re-issued (${state.audioHits} origin hits)`);
+    state.denyAll = false;
+  }
+
+  // G7: the repaired chapter is cached under the unsigned key, so the next
+  // request needs neither the network nor a signature.
+  {
+    await page.evaluate(() => caches.delete('audiobook-stream'));
+    state.sig = 'good-7'; state.mediaCalls = 0;
+    await get(chapter('0701', 'expired'));
+    const cached = await pollCache('audiobook-stream', 'chapter_0701.m4a', 4000);
+    check(cached, 'G: the recovered chapter is cached');
+    const keys = await cacheKeys('audiobook-stream');
+    check(!keys.some((p) => p.includes('Signature')),
+          'G: keyed without the signature that fetched it');
+  }
 }
 
 // --- D: /api/* bypasses SW caching ---

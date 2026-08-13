@@ -88,10 +88,15 @@ await page.waitForSelector('#book-list .book-item');
 await page.click('#book-list .book-item .book-open');
 await page.waitForSelector('#player-view.active');
 await page.click('#play-btn');
-await page.waitForFunction(() => {
+// Checked, not swallowed. The comment above states the requirement and the
+// `.catch(() => {})` that used to be here let the test proceed without it: if
+// the first engine never played, its element is already paused and check B
+// passes while proving nothing about disposal stopping live playback.
+const firstPlayed = await page.waitForFunction(() => {
   const a = document.querySelector('audio');
   return a && !a.paused && a.currentTime > 0.1;
-}, null, { timeout: 10000 }).catch(() => {});
+}, null, { timeout: 10000 }).then(() => true, () => false);
+check(firstPlayed, 'the first engine is actually playing before it is replaced');
 
 // Hold onto the first element so it can be inspected after it is replaced.
 await page.evaluate(() => { window.__first = document.querySelector('audio'); });

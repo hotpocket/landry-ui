@@ -4,8 +4,9 @@
  * merely INCLUDED this stylesheet had its whole document reset and darkened.
  * That is the opposite of what init({embedded:true}) and .player-embedded-host
  * are for. Both are now scoped to the player's own root, which init() marks
- * with .rs-player, and the standalone shell opts back into the page-level
- * behaviour through .rs-standalone on <body>.
+ * with .rs-player. Page-level styling stays the DEFAULT and an embedding host
+ * opts out of it — see the note on body:not(.rs-embedded-page) below, which is
+ * where the reasoning lives.
  *
  * The reset is scoped, not dropped: it does real work inside the player (the
  * chapter list is a <ul> and the UA gives it 40px of padding). And .rs-player

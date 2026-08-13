@@ -16,9 +16,12 @@
 // `body` for its own background and text colour, because after scoping there is
 // nothing to borrow. That is why .rs-player carries them now.
 //
-// Standalone keeps every bit of its old behaviour, via a class init() puts on
-// document.body when the host has NOT asked for embedding. No consumer changes:
-// karagame, chatterbook and books all get the mode they already had.
+// Standalone keeps every bit of its old behaviour by being the DEFAULT: the
+// body rule applies unless the page carries .rs-embedded-page, which init()
+// adds only when the host asked to embed. Stated as the negative so the shell
+// is styled by the stylesheet alone and never waits on a script — see case F.
+// No consumer changes: karagame, chatterbook and books all get the mode they
+// already had.
 //
 // Contract under test:
 //   A. embedded, the host page keeps its own margins and padding

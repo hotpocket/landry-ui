@@ -55,7 +55,7 @@ a second boundary inside the window.
 Green 6/6 alone, 6/6 under parity staging, 3/3 with the preceding suites. It only
 reproduced after saturating all 32 cores — then about **1 in 5**:
 
-```
+```text
 ok:   B: audio kept advancing after thaw (1.408472 → 1.415929)
 FAIL: B: the rAF loop repainted the clock after thaw (0:01 → 0:01)
 ```

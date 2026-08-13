@@ -14,7 +14,13 @@
  * on a host page there is nothing left to inherit them from, and the palette
  * below is built for a dark ground. */
 .rs-player, .rs-player * { margin: 0; padding: 0; box-sizing: border-box; }
-.rs-player { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0f0f0f; color: #e0e0e0; }
+/* --player-surface, not a second literal: .content-area below already derives
+   its pane colour from it, and an embedding host sets it to its OWN background
+   so the seam between page and player does not read as a mistake — warm #12100e
+   against neutral #0f0f0f is near-identical in luminance, which is exactly what
+   makes a mismatch look like a bug rather than a panel. Copying the literal here
+   would have drifted from line 116 the moment either moved. */
+.rs-player { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--player-surface, #0f0f0f); color: #e0e0e0; }
 /* Standalone is the DEFAULT, and the negation is why. Every consumer calls
  * init() from a classic <script> at the bottom of <body>, so a class added by
  * init() lands one script-execution after the stylesheet — and a paint can

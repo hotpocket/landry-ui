@@ -30,6 +30,14 @@
 //   D. the player carries its own background and text colour, so it is legible
 //      on a light host rather than depending on having darkened the page
 //   E. standalone is unchanged: the body rule still applies, in full
+//   G. the background the player paints on its own root is the SAME source of
+//      truth the panes already use — `--player-surface`. books.landry.bot sets
+//      it on the container it passes as `container:` precisely so the seam
+//      between its page and the player does not read as a mistake: its palette
+//      is warm (#12100e) and the player's default is neutral (#0f0f0f), near
+//      identical in luminance, which is what makes a mismatch look like a bug
+//      rather than a panel. A second hardcoded literal here drifts from the one
+//      on .content-area the moment either moves.
 //   F. a host can opt out from the very first paint, with no JavaScript — the
 //      class init() sets is one it can set itself. This is the guarantee the
 //      JS path cannot give: init() runs a script-execution after the stylesheet
@@ -170,6 +178,29 @@ await page.click('#book-list .book-item .book-open');
 await page.waitForSelector('#player-view.active');
 const chapterPad2 = await css('#chapter-list', 'paddingLeft');
 check(chapterPad2 === '0px', `C: the reset applies standalone too (${chapterPad2})`);
+
+// --- G: the player root honours --player-surface, like the panes do ---------
+// Exactly books.landry.bot's arrangement: the variable is set on the element
+// handed to init() as `container:`.
+await page.goto(`${origin}/host.html`);
+await page.evaluate(({ books }) => {
+  location.hash = '';
+  const mount = document.getElementById('app');
+  mount.style.setProperty('--player-surface', 'rgb(18, 16, 14)');   // books' warm --bg
+  window.RepoStoryPlayer.init({
+    container: mount, books, audioBaseUrl: 'audio/', autoOpenLast: false,
+    title: 'Lib', embedded: true,
+  });
+}, { books: BOOKS });
+await page.waitForSelector('#book-list .book-item');
+const themedRoot = await css('#app', 'backgroundColor');
+check(themedRoot === 'rgb(18, 16, 14)',
+      `G: the player root takes the host's --player-surface (${themedRoot})`);
+await page.click('#book-list .book-item .book-open');
+await page.waitForSelector('#player-view.active');
+const themedPane = await css('.content-area', 'backgroundColor');
+check(themedPane === themedRoot,
+      `G: and the panes agree with it, so there is no seam (${themedPane} vs ${themedRoot})`);
 
 // --- F: the static opt-out, before any script has run -----------------------
 await page.goto(`${origin}/host-optout.html`);

@@ -16,6 +16,17 @@ verified in production.
 - [ ] `karagame` — karalandry.com. Being phased out entirely; this line goes
       when the site does, not when it switches.
 - [ ] `chatterbook` — `./luinst audiobook/vanilla lui-deps/player`, and the
-      `build_book.sh --mode standalone` `file://` bundle.
-- [ ] `landry.bot/books` — `PLAYER=` in `scripts/build-shell.sh`. First to
-      switch, and the one watched in production.
+      `build_book.sh --mode standalone` `file://` bundle. Its installed copy is
+      an older vanilla snapshot, so the switch is still ahead of it.
+
+## Switched
+
+Kept as a record, not a checklist: `remainingConsumers` counts unticked boxes
+only, so nothing here affects the flag.
+
+- [x] `landry.bot/books` — switched 2026-08-07 (`PLAYER=` in
+      `scripts/build-shell.sh`), in production since. First to switch and the
+      one watched, which is why it found the two embedding defects the other
+      consumers never would have: the player painting its own root over the
+      host's `--player-surface`, and this shell's typography relying on a global
+      reset that `player.css` had no business applying.

@@ -55,10 +55,31 @@ status: active
       new `playback-recovery` case H simulates the hang and the visibility
       return, but not a real phone with a real radio.
 
-- [ ] **Watch books.landry.bot for the embedded CSS change.** `ed8541a` stops
-      `player.css` styling the host page. books embeds, so it is the one
-      consumer whose appearance can move; standalone was verified byte-identical
-      by screenshot but embedded was only verified by assertion.
+- [x] **Watch books.landry.bot for the embedded CSS change.** Done 2026-08-13,
+      and it found two real regressions before deploy: a hardcoded background
+      painted over books' `--player-surface` (fixed `2e2531b`), and books'
+      typography silently relying on the global reset that was removed (fixed
+      books-side `ad1f4c0`). Both needed a real embedding host; no test here
+      could see either.
+
+- [ ] **Migrate karagame and chatterbook off vanilla.** books switched
+      2026-08-07 and is off the `RETIREMENT.md` list as of `10dadb7`; these two
+      are what still gates deleting `audiobook/vanilla/`. karagame fetches it in
+      `deploy.sh:225`; chatterbook's installed copy is a STALE vanilla snapshot,
+      not merely an old switch, so it will jump several changes at once.
+
+- [ ] **`c820976` shipped to main unreviewed** — the SW 403-repair feature, seen
+      by neither CodeRabbit nor a second pair of eyes. PR #2 merged 2026-08-13
+      08:28Z as a fast-forward, so `790b082`, `c820976` and `2e2531b` went in
+      without a review pass. Nothing is wrong with them that is known; the point
+      is that nothing checked. Worth a read before karagame or chatterbook
+      deploys, because that is when it reaches them.
+
+- [ ] **karagame and chatterbook now pick up the new `sw.js` on their next
+      deploy.** They fetch `audiobook/vanilla` from main via `luinst`, and main
+      now carries the 403-repair and the 416 guard. Neither has been exercised
+      against those two sites. books is unaffected — it copies from a local
+      checkout.
 
 - [ ] **Vanilla has the same silent-revert download bug** the Preact player just
       had, and its only feedback is a `title` attribute, invisible on touch.

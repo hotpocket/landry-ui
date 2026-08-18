@@ -20,6 +20,11 @@
 //      already in flight on — this is the only layer that sees the prefetch
 //      and the mid-file seek at all, which are exactly the requests the
 //      player's own recovery never gets told about
+//   H. a content-hashed shell asset (?v=<hash>) is served from cache WITHOUT a
+//      network round trip, while an unversioned one stays network-first. The
+//      hash is in the URL, so a stale entry can never answer for new bytes —
+//      but index.html carries no hash and is what points at the new hashes, so
+//      it must keep revalidating or a deploy would never be picked up
 //   F. a Range that starts past the end of a cached entry is refused with 416,
 //      not answered with a malformed 206. Clamping only the END lets `start`
 //      overtake it, and the response then carries a negative Content-Length and
@@ -50,7 +55,11 @@ const check = (c, m) => (c ? ok(m) : bad(m));
 // which is what an expired one does. `mediaCalls` counts re-mints, because
 // "one API call for a burst of denied chapters" is half the contract.
 const state = { deny1: false, sig: 'good-1', mediaCalls: 0, mediaStatus: 200,
-                mintDenied: false, denyAll: false, audioHits: 0 };
+                mintDenied: false, denyAll: false, audioHits: 0,
+                // Hits per shell URL INCLUDING its query, which is the whole
+                // point: /player.js and /player.js?v=abc are different cache
+                // entries and must be counted apart.
+                shellHits: {} };
 const SPACE = 'a'.repeat(16);
 const BOOK = 'bk1';
 const MIME = { html: 'text/html', js: 'text/javascript', css: 'text/css',
@@ -114,6 +123,7 @@ const server = createServer((req, res) => {
              : path.startsWith('/audiobook/vanilla/') ? join(vanilla, path.slice('/audiobook/vanilla/'.length))
              : join(outDir, path === '/' ? 'index.html' : path.slice(1));
   const file = normalize(base);
+  state.shellHits[req.url] = (state.shellHits[req.url] || 0) + 1;
   if (!existsSync(file)) { res.writeHead(404); res.end(); return; }
   const ext = file.split('.').pop();
   const body = readFileSync(file);
@@ -416,6 +426,64 @@ async function pollCache(name, want, timeoutMs) {
     if (keys.some((p) => p.includes('no-such-shell-file'))) found = true;
   }
   check(!found, 'E: 404 shell response not cached');
+}
+
+// --- H: content-hashed assets are cache-first, unversioned ones are not ---
+{
+  const hits = (u) => state.shellHits[u] || 0;
+  // A path the stub origin actually serves. The fixture holds only index.html
+  // and audio/, so /player.js 404s there — and a 404 is not cached by either
+  // branch, which made an earlier version of this case pass against a feature
+  // that did not exist yet.
+  const VERSIONED = '/audiobook/vanilla/player.js?v=deadbeef1234';
+  const PLAIN = '/audiobook/vanilla/player.js';
+
+  // Sequential, and the second only once the write has landed. The worker
+  // returns the bytes before cache.put resolves (deliberately — see sw.js), so
+  // a back-to-back second fetch can beat the write to the cache and look like
+  // a cache-first failure that is nothing of the kind.
+  await page.evaluate((u) => fetch(u).then((r) => r.text()), VERSIONED);
+  const afterFirst = hits(VERSIONED);
+
+  const stored = await (async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 5000) {
+      const found = await page.evaluate((u) => caches.open('audiobook-shell-dev')
+        .then((c) => c.keys())
+        .then((ks) => ks.some((k) => k.url.endsWith(u))), VERSIONED)
+        .catch(() => false);
+      if (found) return true;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return false;
+  })();
+  // Survives disabling the cache-first branch: the network-first branch below
+  // populates the same cache. It guards that the write happens at all, and is
+  // what makes the next assertion's timing deterministic — the origin-hit
+  // count is the one that discriminates.
+  check(stored, 'H: the versioned asset is written to the shell cache');
+
+  await page.evaluate((u) => fetch(u).then((r) => r.text()), VERSIONED);
+  const afterSecond = hits(VERSIONED);
+
+  check(afterFirst === 1,
+    `H: a versioned asset is fetched once to populate the cache (${afterFirst})`);
+  check(afterSecond === 1,
+    `H: the second request is served from cache, no origin hit (${afterSecond})`);
+
+  const plainBefore = hits(PLAIN);
+  await page.evaluate((u) => fetch(u).then((r) => r.text()), PLAIN);
+  await page.evaluate((u) => fetch(u).then((r) => r.text()), PLAIN);
+  const plainAfter = hits(PLAIN);
+  check(plainAfter - plainBefore === 2,
+    `H: an unversioned asset stays network-first (${plainAfter - plainBefore} of 2 reached the origin)`);
+
+  // index.html is the file that names the new hashes. Cache-first on it would
+  // pin the whole shell to whatever version was installed first.
+  const rootBefore = hits('/');
+  await page.evaluate(() => fetch('/').then((r) => r.text()));
+  check(hits('/') - rootBefore === 1,
+    'H: index.html keeps revalidating so a deploy is picked up');
 }
 
 await browser.close();

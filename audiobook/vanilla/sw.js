@@ -430,6 +430,40 @@ self.addEventListener('fetch', function (e) {
     return;
   }
 
+  // A content hash in the URL makes the response immutable by construction:
+  // new bytes are published under a new `?v=`, so a cached entry can never be
+  // stale for the URL that names it. Going to the network first to be told
+  // that was a round trip on every asset on every load — 0.1-0.3 s of a cold
+  // page load spent confirming an answer that could not have changed.
+  //
+  // index.html deliberately carries no hash: it is the file that POINTS at the
+  // new hashes, so it falls through to the network-first branch below. Pinning
+  // it here would freeze the whole shell at whatever version installed first
+  // and no deploy would ever be picked up.
+  if (url.searchParams.has('v')) {
+    e.respondWith(
+      caches.open(CACHE_NAME).then(function (cache) {
+        return cache.match(e.request).then(function (hit) {
+          if (hit) return hit;
+          return fetch(e.request).then(function (response) {
+            // Same rule as the shell branch: only a good response is stored.
+            // A cached 403 here would be permanent, because nothing would ever
+            // go back to the network for this URL again.
+            //
+            // waitUntil, not await: the bytes go to the page as soon as they
+            // arrive, and the cache write outlives the response. Awaiting the
+            // write first would put a disk round trip in front of every asset
+            // on its first load, which is the cost this branch exists to
+            // remove.
+            if (response.ok) e.waitUntil(cache.put(e.request, response.clone()));
+            return response;
+          });
+        });
+      })
+    );
+    return;
+  }
+
   // Shell files: network-first, fall back to cache when offline.
   var requestUrl = e.request.url;
   e.respondWith(

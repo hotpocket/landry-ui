@@ -64,7 +64,22 @@ if (typeof document !== 'undefined') {
   // container — on every host re-render.
   document.addEventListener('mousemove', (e) => activeEngine?.onDocumentMouseMove(e));
   document.addEventListener('mouseup', () => activeEngine?.onDocumentMouseUp());
+  document.addEventListener('keydown', (e) => activeEngine?.onKeyDown(e));
 }
+
+/**
+ * Controls the browser operates on its own when Space is pressed on them.
+ * A global handler that fires here as well toggles twice, which reads as the
+ * key doing nothing — and it is the state the reporter was already in, since
+ * Space "worked" only while the transport had focus.
+ *
+ * Editable targets are the other half, and the worse one: a space typed into
+ * the search box that pauses the book instead of typing a space is a bigger
+ * bug than the one this fixes.
+ */
+const SPACE_BELONGS_TO =
+  'input, textarea, select, button, a[href], summary, [role="button"], '
+  + '[contenteditable=""], [contenteditable="true"]';
 
 interface DividerDrag { resize: (x: number, y: number) => void; el: HTMLElement }
 interface Scrubbing { li: HTMLLIElement; idx: number; dur: number }
@@ -629,6 +644,35 @@ export class PlayerEngine {
   togglePlay = (): void => {
     if (this.intendsPlayback()) this.stopPlayback();
     else this.startPlayback();
+  };
+
+  /**
+   * Space plays and pauses, from anywhere on the page.
+   *
+   * Reported from books.landry.bot as "space works, but only after clicking
+   * pause". That was never a shortcut: it was the browser activating a focused
+   * button, so the key worked exactly while focus happened to sit on the
+   * transport. A listener reading the transcript had nothing.
+   *
+   * Public because the document-level listener reaches it through
+   * `activeEngine` — one listener for the page, whichever engine is current,
+   * the same shape as the drag handlers above.
+   */
+  onKeyDown = (e: KeyboardEvent): void => {
+    if (e.key !== ' ' && e.code !== 'Space') return;
+    // A held key repeats. One press is one toggle.
+    if (e.repeat) return;
+    // Chords belong to the browser and the OS.
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // The library is not the player. Space on a focused book row opens that
+    // book, which is book-menu's case I, and there is nothing to toggle until
+    // one is open.
+    if (!this.currentBook) return;
+    const el = e.target instanceof Element ? e.target : null;
+    if (el && el.closest(SPACE_BELONGS_TO)) return;
+    // Otherwise Space scrolls the page.
+    e.preventDefault();
+    this.togglePlay();
   };
 
   skip = (s: number): void => { this.seekToBookTime(this.bookTime() + s, this.intendsPlayback()); };

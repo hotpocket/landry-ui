@@ -229,15 +229,36 @@ body:not(.rs-embedded-page) { margin: 0; padding: 0; font-family: -apple-system,
 /* Reading-mode chapter row. Hidden elsewhere: the chapter list and the
    now-playing block already name the chapter there. */
 .reading-chapter { display: none; }
+/* Two lines, and the second is a ceiling rather than a reserved slot: a
+   one-line title still takes one line, because vertical space in reading mode
+   is text.
+
+   This was nowrap with an ellipsis, which was the wrong tool twice over. A
+   real title runs well past a phone's width — "Chapter 3: Interrogating Your
+   Own Motivation Until You Find the Extrinsic Goal Underneath" — so the
+   ellipsis cut it to something that named nothing; and, worse, nowrap gave
+   this row a min-content width as long as the whole title. Embedded, the
+   player is a flex item, and a flex item is never laid out narrower than its
+   min-content: that one line sized the entire player. Measured on the
+   reported phone: a 412px screen, a 379px mount, a 605px #player-view, and
+   the header's controls clipped away by the host's overflow-x — A+, follow
+   and read simply gone.
+
+   Wrapping removes the pressure at its source; the clamp stops the row eating
+   the page it just saved. overflow-wrap covers the title that is one long
+   unbroken token, which wrapping alone cannot help. */
 .player-view.reading-mode .reading-chapter {
-  display: block;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
   flex-shrink: 0;
   padding: 0.15rem 0.75rem 0.35rem;
   font-size: 0.85rem;
+  line-height: 1.3;
   color: #4a9eff;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* Landscape phones: the header/controls chrome eats the screen — compact it

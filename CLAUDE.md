@@ -82,6 +82,9 @@ Three entry points, and they cover different things:
 Suites worth knowing by name: `scene-pause` (the hold yields to a tap),
 `resilience` (403 → onAuthRefresh → retry, capped), `lifecycle` (freeze/thaw,
 the closest a headless test gets to the screen going off), `sw-cache` (the
-service worker streams, caps and never poisons), and `playback-recovery`
+service worker streams, caps and never poisons), `playback-recovery`
 (recovery obeys an explicit pause, a hanging request is recovered, failures are
-recorded to `rs-diag`).
+recorded to `rs-diag`), and `reading-title` (a long chapter title wraps to two
+lines and moves no control — it mounts the player the way books.landry.bot
+does, a flex item under an `overflow-x: hidden` host, because a standalone page
+cannot exhibit the min-content blowout it exists to catch).

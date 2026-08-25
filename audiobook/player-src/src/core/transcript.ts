@@ -18,6 +18,10 @@ export interface ChapterTranscript {
   index: number;
   chunks: Chunk[];
   summary_chunks?: Chunk[];
+  /** Where this chapter's text came from, when it came from something public.
+   *  Optional and usually absent: a book of original prose has no original to
+   *  link to, and the panel must show no link rather than a dead one. */
+  source_url?: string;
 }
 
 export interface BookTranscript {

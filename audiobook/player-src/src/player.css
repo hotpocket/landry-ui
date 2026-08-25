@@ -165,6 +165,19 @@ body:not(.rs-embedded-page) { margin: 0; padding: 0; font-family: -apple-system,
    row instead of overflowing the panel's hidden edge. */
 .transcript-panel-header { display: flex; align-items: center; padding: 0.5rem 0.75rem; flex-shrink: 0; flex-wrap: wrap; row-gap: 0.25rem; }
 .transcript-panel-header h3 { font-size: 0.75rem; font-weight: 400; color: #555; text-transform: uppercase; letter-spacing: 0.1em; }
+/* "Original Source" — sits immediately right of the Transcript heading and is
+   styled as its quiet sibling, not as another control: the header's buttons are
+   bordered, and giving this a border would read as a fourth toggle. Only books
+   transcribed from something public render it at all (transcript source_url);
+   the engine hides it otherwise, so it must not reserve space when hidden. */
+.source-link { margin-left: 0.6rem; font-size: 0.7rem; color: #4a9eff;
+  text-decoration: none; text-transform: uppercase; letter-spacing: 0.08em;
+  white-space: nowrap; border-bottom: 1px solid transparent;
+  transition: color 0.15s, border-color 0.15s; }
+.source-link:hover { color: #7ab8ff; border-bottom-color: #7ab8ff; }
+.source-link:focus-visible { outline: 2px solid #4a9eff; outline-offset: 2px; }
+/* Reading mode drops the "Transcript" heading; the link is still the reader's
+   way back to the original, so it stays. */
 .th-spacer { flex: 1; min-width: 0; }
 .follow-btn, .reading-btn, .mini-play-btn, .mode-btn { white-space: nowrap; }
 .mode-toggle { display: inline-flex; gap: 0.25rem; margin-left: 0.75rem; }

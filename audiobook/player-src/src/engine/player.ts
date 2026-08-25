@@ -24,7 +24,7 @@ import { bookSlug, bookIdxFromSlug, hashForBook, slugFromHash, collidingSlugs } 
 import { readProgress, writeProgress, readLastBook, type KeyValueStore } from '../core/progress.ts';
 import {
   bookTranscript, chapterTranscript, chunksFor, findChunkAt,
-  type TranscriptData, type Chunk,
+  type TranscriptData, type Chunk, type ChapterTranscript,
 } from '../core/transcript.ts';
 import { isSceneBreak, crossedSceneBreak } from '../core/scene.ts';
 import {
@@ -342,6 +342,28 @@ export class PlayerEngine {
       if (autoplay) this.audio.play().catch(() => { /* ignore */ });
     } else {
       this.loadChapter(idx, timeInChapter, autoplay);
+    }
+  }
+
+  /**
+   * The "Original Source" link beside the Transcript heading.
+   *
+   * Presence of `source_url` is the whole condition. Books transcribed from
+   * something public (a YouTube episode, a talk) carry it per chapter; books of
+   * original prose carry nothing and get no link. Driven from the transcript
+   * rather than the manifest because the panel it sits in is the transcript's,
+   * and it must change with the chapter the panel is showing.
+   */
+  private setSourceLink(ct: ChapterTranscript | null): void {
+    const el = this.refs.sourceLink.current;
+    if (!el) return;
+    const url = ct?.source_url;
+    if (url) {
+      el.href = url;
+      el.style.display = '';
+    } else {
+      el.removeAttribute('href');
+      el.style.display = 'none';
     }
   }
 
@@ -930,6 +952,7 @@ export class PlayerEngine {
     if (!bt) return;
     const ct = chapterTranscript(bt, { id: chapterIndex - 1 });
     box.innerHTML = '';
+    this.setSourceLink(ct);
     if (!ct) return;
 
     for (const chunk of chunksFor(ct, this.summaryMode)) {

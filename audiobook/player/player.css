@@ -170,12 +170,13 @@ body:not(.rs-embedded-page) { margin: 0; padding: 0; font-family: -apple-system,
    bordered, and giving this a border would read as a fourth toggle. Only books
    transcribed from something public render it at all (transcript source_url);
    the engine hides it otherwise, so it must not reserve space when hidden. */
-.source-link { margin-left: 0.6rem; font-size: 0.7rem; color: #4a9eff;
-  text-decoration: none; text-transform: uppercase; letter-spacing: 0.08em;
-  white-space: nowrap; border-bottom: 1px solid transparent;
+.source-link { margin-left: 0.6rem; font-size: 0.62rem; color: #4a9eff;
+  text-decoration: none; letter-spacing: 0.06em; white-space: nowrap;
+  font-variant-numeric: tabular-nums; border-bottom: 1px solid transparent;
   transition: color 0.15s, border-color 0.15s; }
 .source-link:hover { color: #7ab8ff; border-bottom-color: #7ab8ff; }
 .source-link:focus-visible { outline: 2px solid #4a9eff; outline-offset: 2px; }
+
 /* Reading mode drops the "Transcript" heading; the link is still the reader's
    way back to the original, so it stays. */
 .th-spacer { flex: 1; min-width: 0; }

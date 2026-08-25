@@ -22,6 +22,27 @@ export interface ChapterTranscript {
    *  Optional and usually absent: a book of original prose has no original to
    *  link to, and the panel must show no link rather than a dead one. */
   source_url?: string;
+  /** When the original was published, ISO `YYYY-MM-DD`. Optional again inside
+   *  source_url: a link whose date nobody recorded is still worth having. */
+  source_date?: string;
+  /** True when source_date was inferred rather than read from the source.
+   *  The player prefixes those with '~' — a guessed date shown as a fact is
+   *  worse than no date, and the reader cannot tell them apart otherwise. */
+  source_date_estimated?: boolean;
+}
+
+/**
+ * ISO `YYYY-MM-DD` as `yyyy/mm/dd`, or '' for anything that is not that.
+ *
+ * Formatting lives here rather than in the published data: a display format
+ * baked into every book's transcript cannot be changed without republishing
+ * all of them. Returning '' rather than the raw string for an unrecognised
+ * value is deliberate — a date field showing "unknown" or a half-parsed
+ * fragment is worse than showing nothing beside the link.
+ */
+export function shortDate(iso: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((iso ?? '').trim());
+  return m ? `${m[1]}/${m[2]}/${m[3]}` : '';
 }
 
 export interface BookTranscript {

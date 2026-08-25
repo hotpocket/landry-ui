@@ -138,9 +138,11 @@ export function Shell({ title, hideBackButton, hideNowPlaying, refs }: ShellProp
             <div class="reading-chapter" id="reading-chapter" ref={refs.readingChapter} />
             <div class="transcript-panel-header">
               <h3>Transcript</h3>
-              {/* Shown only for chapters whose transcript carries a source_url.
-                  Hidden by default so a book of original prose never flashes a
-                  link before the engine can hide it. */}
+              {/* The date of the original, and the link to it — one element,
+                  because the date is the label. Shown only for a chapter whose
+                  transcript carries both; hidden by default so a book of
+                  original prose never flashes a link before the engine hides
+                  it. Text is set by the engine, per chapter. */}
               <a
                 class="source-link"
                 id="source-link"
@@ -149,7 +151,6 @@ export function Shell({ title, hideBackButton, hideNowPlaying, refs }: ShellProp
                 rel="noopener noreferrer"
                 ref={refs.sourceLink}
               >
-                Original Source
               </a>
               <span class="mode-toggle" id="mode-toggle" style="display:none" ref={refs.modeToggle}>
                 <button class="mode-btn" id="mode-full" title="Full chapter audio + transcript" ref={refs.modeFull}>

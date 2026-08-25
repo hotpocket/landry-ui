@@ -23,7 +23,7 @@ import {
 import { bookSlug, bookIdxFromSlug, hashForBook, slugFromHash, collidingSlugs } from '../core/routing.ts';
 import { readProgress, writeProgress, readLastBook, type KeyValueStore } from '../core/progress.ts';
 import {
-  bookTranscript, chapterTranscript, chunksFor, findChunkAt,
+  bookTranscript, chapterTranscript, chunksFor, findChunkAt, shortDate,
   type TranscriptData, type Chunk, type ChapterTranscript,
 } from '../core/transcript.ts';
 import { isSceneBreak, crossedSceneBreak } from '../core/scene.ts';
@@ -358,11 +358,20 @@ export class PlayerEngine {
     const el = this.refs.sourceLink.current;
     if (!el) return;
     const url = ct?.source_url;
-    if (url) {
+    const exact = shortDate(ct?.source_date);
+    // '~' only ever precedes a date that exists; an empty stamp stays empty
+    // rather than becoming a lone tilde.
+    const stamp = exact && ct?.source_date_estimated ? `~${exact}` : exact;
+    // Both, or nothing. The date is the label now, so a source whose date
+    // nobody recorded has no text to click and must not render an empty
+    // anchor — and a date with no url is not a link at all.
+    if (url && stamp) {
       el.href = url;
+      el.textContent = stamp;
       el.style.display = '';
     } else {
       el.removeAttribute('href');
+      el.textContent = '';
       el.style.display = 'none';
     }
   }

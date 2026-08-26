@@ -10,6 +10,7 @@ import { render, createRef } from 'preact';
 import { Shell, type ShellRefs } from './view/Shell.tsx';
 import { PlayerEngine } from './engine/player.ts';
 import { readDiag, type DiagEntry } from './core/diagnostics.ts';
+import { safeStorage } from './core/storage.ts';
 
 export interface PlayerChrome {
   back?: boolean;
@@ -92,7 +93,10 @@ function init(opts: PlayerOptions): void {
     .RepoStoryFeedback;
   feedback?.init(opts.feedbackUrl);
 
-  const engine = new PlayerEngine(opts, refs, localStorage);
+  // safeStorage, not `localStorage`: reading that identifier THROWS on iOS
+  // Safari with "Block All Cookies", and a throw here is a mount that never
+  // happens — the whole page, not just the preferences it was reaching for.
+  const engine = new PlayerEngine(opts, refs, safeStorage());
   engine.start();
 }
 
@@ -104,10 +108,12 @@ function init(opts: PlayerOptions): void {
  * renders this back to the person who was listening.
  */
 function diagnostics(): DiagEntry[] {
+  // safeStorage already answers null for storage that is blocked or refuses to
+  // be read; the try stays for readDiag, which parses whatever it is handed.
   try {
-    return readDiag(localStorage.getItem('rs-diag'));
+    return readDiag(safeStorage().getItem('rs-diag'));
   } catch {
-    return [];   // storage blocked (private mode, embedded frame)
+    return [];
   }
 }
 

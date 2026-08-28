@@ -1262,7 +1262,12 @@ export class PlayerEngine {
     if (!box || !this.currentBook) return;
     const bt = bookTranscript(this.transcriptData, this.currentBook);
     if (!bt) return;
-    const ct = chapterTranscript(bt, { id: chapterIndex - 1 });
+    // The chapter itself, not a synthetic { id }: chapterTranscript pairs on the
+    // source chapter number where both sides publish one, and an object literal
+    // carrying only a position silently opts this — the transcript pane, the
+    // surface the reader actually reads — out of the fix.
+    const forChapter = this.currentBook.chapters[chapterIndex - 1];
+    const ct = chapterTranscript(bt, forChapter ?? { id: chapterIndex - 1 });
     box.innerHTML = '';
     this.setSourceLink(ct);
     if (!ct) return;

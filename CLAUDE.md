@@ -7,6 +7,13 @@ the books site, read `change_request.md` in the `books` repo first — it carrie
 the build pipeline (`player-src` → `build.mjs` → committed artifacts) and how
 the shell picks the player up.
 
+This repo is the **player** in a larger audiobook constellation: `bookshelf`
+owns book text and metadata, `chatterbook` is the narration engine and builds
+the site data (`books.json`, `transcripts.json`), and `landry.bot/books`,
+`karagame` and `brandonlandry` are the consuming sites. The map of how they
+fit together lives in `$GIT_HOME/bookshelf/SYSTEM.md` — read it there rather
+than restating it here.
+
 ## Conventions
 
 - Components live under a feature directory (e.g. `audiobook/`) with platform subdirectories (`vanilla/`, `react/`, `flutter/`).

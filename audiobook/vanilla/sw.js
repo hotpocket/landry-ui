@@ -52,10 +52,141 @@ var SHELL_FILES = [
   'icons/icon-512.png'
 ];
 
-// One-time eviction of legacy single-file caches from prior architecture,
-// plus chapters recalled after a bad generation shipped (same URL, new bytes —
-// the immutable HTTP cache and this SW cache would otherwise never refetch).
-var LEGACY_AUDIO_KEYS = ['audio/book.m4b', 'audio/chapter_1073.m4a'];
+// --- evicting audio that can no longer be current ---------------------------
+//
+// LEGACY_AUDIO_KEYS used to live here: a hand-written list of two URLs — the
+// single-file book.m4b from the pre-chapter architecture, and one chapter
+// recalled after a bad generation shipped under the same name. It was the right
+// instinct and the wrong shape. THE CLASS it was one sample of: every artifact
+// derived from source/N.txt that is addressed by a name which does not move
+// when the text does. A list has to be edited by whoever notices; the rule
+// below needs nobody to notice.
+//
+// The rule has two halves, because two different things can be stale:
+//
+//   1. UNVERSIONED entries under a signed path (activate). Audio published to
+//      books.landry.bot now carries `?v=<content_hash>`, so an entry without
+//      one was cached before versioning existed and there is no way to ask
+//      whether it is current — it can only be dropped. Both of the old
+//      LEGACY_AUDIO_KEYS are unversioned by construction, so this covers them
+//      and everything else that shipped alongside them.
+//
+//   2. SUPERSEDED renders (on a manifest message from the page). `?v=old` and
+//      `?v=new` are different keys, so the old one is never served again — but
+//      it is also never removed, and a 1,128-chapter book re-rendered chapter
+//      by chapter would eventually hold two copies of most of itself in a
+//      reader's PWA with nothing on screen to say so. Only the page knows
+//      which renders are current, so the page tells us.
+//
+// The gate on half 1 is the signed path, and it is the same gate the signature
+// repair uses further down: this worker ships byte-identical to sites that
+// serve unsigned audio from manifests with no hashes (RETIREMENT.md), where
+// EVERY entry is unversioned. Evicting there would delete an offline download
+// on every deploy and re-download it on every visit.
+var AUDIO_EXT = /\.(m4a|mp3|ogg|m4b)$/;
+
+// Kept OUT of the stripped-parameter list below, unlike the signature: the
+// signature says who may fetch the bytes, this says WHICH bytes. One spelling,
+// shared with player-src/src/core/media-url.ts (CONTENT_VERSION_PARAM), and
+// test/audio-versioning.test.mjs reads both files and fails if they drift.
+var CONTENT_VERSION_PARAM = 'v';
+
+function dirOf(pathname) {
+  return pathname.slice(0, pathname.lastIndexOf('/') + 1);
+}
+
+// Both audio caches. The shell cache is not swept: it is keyed by build and
+// activate() already deletes every cache that is not the current name.
+//
+// `shouldDelete(url, context)` is handed a `versionedDirs` map alongside each
+// entry, because both halves need to know what the CACHE AS A WHOLE looks like
+// and neither can tell from one key.
+function sweepAudio(shouldDelete) {
+  return Promise.all([AUDIO_CACHE, STREAM_CACHE].map(function (name) {
+    return caches.open(name).then(function (cache) {
+      return cache.keys().then(function (requests) {
+        var audio = [];
+        var versionedDirs = {};
+        requests.forEach(function (req) {
+          var u;
+          try { u = new URL(req.url); } catch (err) { return; }
+          // Shell files live in AUDIO_CACHE too — downloadForOffline puts
+          // player.js, the transcript and the icons there so the app opens
+          // offline — and the stream cache holds its own FIFO index. Only
+          // audio is ours to evict.
+          if (!AUDIO_EXT.test(u.pathname)) return;
+          audio.push([req, u]);
+          if (u.searchParams.get(CONTENT_VERSION_PARAM)) {
+            versionedDirs[dirOf(u.pathname)] = true;
+          }
+        });
+        return Promise.all(audio.map(function (pair) {
+          return shouldDelete(pair[1], versionedDirs) ? cache.delete(pair[0]) : null;
+        }));
+      });
+    }).catch(function () {
+      // A cache that will not open (quota, a browser that refuses storage) is
+      // one that has nothing stale in it either. Never a failed activation.
+    });
+  }));
+}
+
+// Half 1. SIGNED_PATH is declared further down, next to the signature repair
+// that is its other user; this only reads it when the sweep actually runs.
+//
+// Two conditions, and the second one matters as much as the first. An entry is
+// dropped when it carries no version AND a versioned entry exists in the same
+// directory — that is, the book has moved to content addressing and this entry
+// predates the move. Without the second condition, a book on this site whose
+// manifest has no content_hash yet (an older chatterbook wrote it) would have
+// its CURRENT audio deleted on every shell deploy, and the reader would be
+// handed a re-download of a book they had already downloaded. Those books lose
+// nothing by waiting: the page sweeps a book's directory precisely when it
+// opens it (evictSupersededAudio), which is the moment the answer is known.
+function evictUnversionedAudio() {
+  return sweepAudio(function (u, versionedDirs) {
+    if (!SIGNED_PATH.test(u.pathname)) return false;
+    if (u.searchParams.get(CONTENT_VERSION_PARAM)) return false;
+    return !!versionedDirs[dirOf(u.pathname)];
+  });
+}
+
+// Half 2. `keys` is the exact set of cache keys the open book is made of. Only
+// the DIRECTORIES those keys name are swept, so one book's manifest never
+// speaks for another's — a reader with two books downloaded must not lose one
+// by opening the other.
+function evictSupersededAudio(keys) {
+  var want = {};
+  var dirs = {};
+  (keys || []).forEach(function (k) {
+    var u;
+    try { u = new URL(k); } catch (err) { return; }
+    want[u.href] = true;
+    dirs[dirOf(u.pathname)] = true;
+  });
+  // An empty manifest means "I could not tell you", never "delete everything".
+  if (!Object.keys(want).length) return Promise.resolve();
+  return sweepAudio(function (u) {
+    return !!dirs[dirOf(u.pathname)] && !want[u.href];
+  });
+}
+
+// The page's half of the contract. See media-url.ts's AUDIO_MANIFEST_MESSAGE.
+var AUDIO_MANIFEST_MESSAGE = 'audiobook-manifest';
+
+self.addEventListener('message', function (e) {
+  var data = e.data || {};
+  if (data.type !== AUDIO_MANIFEST_MESSAGE) return;
+  // The reply exists so a caller CAN wait for the sweep. Nothing in the player
+  // does; the test does, because polling for an absence cannot tell a sweep
+  // that found nothing from a sweep that never ran.
+  var port = e.ports && e.ports[0];
+  e.waitUntil(evictSupersededAudio(data.keys).then(function () {
+    if (port) port.postMessage({ swept: true });
+  }).catch(function () {
+    if (port) port.postMessage({ swept: false });
+  }));
+});
 
 self.addEventListener('install', function (e) {
   e.waitUntil(
@@ -84,20 +215,8 @@ self.addEventListener('activate', function (e) {
           return name !== CACHE_NAME && name !== AUDIO_CACHE && name !== STREAM_CACHE;
         }).map(function (name) { return caches.delete(name); }));
       }),
-      // Evict legacy single-file M4B from audio cache (one-time cleanup).
-      caches.open(AUDIO_CACHE).then(function (cache) {
-        return cache.keys().then(function (requests) {
-          return Promise.all(requests.map(function (req) {
-            var url = new URL(req.url);
-            for (var i = 0; i < LEGACY_AUDIO_KEYS.length; i++) {
-              if (url.pathname.endsWith(LEGACY_AUDIO_KEYS[i])) {
-                return cache.delete(req);
-              }
-            }
-            return null;
-          }));
-        });
-      })
+      // Audio whose render cannot be established. See evictUnversionedAudio.
+      evictUnversionedAudio()
     ])
   );
   self.clients.claim();

@@ -35,7 +35,8 @@ import { appendDiag, type DiagEntry } from '../core/diagnostics.ts';
 import { longPressDrag, resizePanels, markProgrammaticScroll, exceededSlop } from './gestures.ts';
 import { TranscriptLoader, wireSearch } from './search-ui.ts';
 import { isRecent } from '../core/recency.ts';
-import { withMediaQuery, secondsUntilExpiry, withCacheBust } from '../core/media-url.ts';
+import { withMediaQuery, secondsUntilExpiry, withCacheBust, withContentVersion,
+  AUDIO_MANIFEST_MESSAGE } from '../core/media-url.ts';
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
 const TS_RATIO = 1.25;
@@ -243,11 +244,43 @@ export class PlayerEngine {
     return this.currentBook?.chapters[this.currentChapterIdx] ?? null;
   }
 
+  /**
+   * The tracks a chapter has, as (file, content hash) pairs.
+   *
+   * One place that knows a track is a filename AND the hash of what that
+   * filename holds. Three call sites need the pairing — playback, the offline
+   * download, and the probe that decides whether the book reports itself
+   * downloaded — and when they disagree the badge reports on an object nobody
+   * will ever fetch.
+   */
+  private tracksOf(ch: Chapter, mode: 'active' | 'all'): { file: string; hash?: string }[] {
+    const full = { file: ch.filename ?? '', hash: ch.content_hash };
+    const summary = ch.summary?.filename
+      ? { file: ch.summary.filename, hash: ch.summary.content_hash }
+      : null;
+    if (mode === 'all') return summary ? [full, summary] : [full];
+    return [this.summaryMode && summary ? summary : full];
+  }
+
+  /**
+   * The URL a chapter's bytes are CACHED under: no signature, and versioned.
+   *
+   * This is the cache key, in the sense sw.js means it — the worker strips the
+   * signature parameters (and `rsr`) and keeps everything else, so this string
+   * is what an offline download is stored under and what a "have I got this?"
+   * probe has to ask for. The version is part of the key on purpose: a chapter
+   * re-rendered from corrected text must not be answerable by the copy of the
+   * previous render sitting in a reader's PWA.
+   */
+  private audioCacheUrl(track: { file: string; hash?: string }): string {
+    return withContentVersion((this.opts.audioBaseUrl ?? 'audio/') + track.file, track.hash);
+  }
+
   private audioUrlFor(ch: Chapter): string {
-    const file = this.summaryMode && ch.summary?.filename ? ch.summary.filename : ch.filename;
     // Appended after the filename, not onto the base: a query on the base would
     // address a different object entirely.
-    return withMediaQuery((this.opts.audioBaseUrl ?? 'audio/') + file, this.mediaQuery());
+    return withMediaQuery(this.audioCacheUrl(this.tracksOf(ch, 'active')[0]),
+                          this.mediaQuery());
   }
 
   /** The signature for the open book, if the host supplied one. */
@@ -1105,6 +1138,48 @@ export class PlayerEngine {
 
   // --------------------------------------------------------------- offline
 
+  /**
+   * Tell the service worker which renders this book is currently made of.
+   *
+   * Versioned URLs stop a stale render from being SERVED; they do nothing
+   * about the one already sitting in Cache Storage. Superseded entries would
+   * otherwise accumulate for the life of the installation — an offline
+   * download of a 1,128-chapter book that is re-rendered chapter by chapter
+   * would eventually hold two copies of most of it, and the reader has no way
+   * to see that, let alone clear it.
+   *
+   * The page is the only side that knows the answer, so it sends it: the exact
+   * set of cache keys the book is made of right now. The worker drops audio
+   * entries in those same directories that are not in the set — which is both
+   * the superseded renders and anything left from before versioning existed.
+   *
+   * Everything here is best-effort and silent. `serviceWorker` is absent on
+   * file:// and inside some privacy modes, `controller` is null on the very
+   * first load before the worker has claimed the page (the next open sends it),
+   * and none of that is worth a line in the reader's console.
+   */
+  private async announceAudioManifest(): Promise<void> {
+    const book = this.currentBook;
+    if (!book) return;
+    try {
+      if (!('serviceWorker' in navigator)) return;
+      const keys: string[] = [];
+      for (const ch of book.chapters) {
+        for (const track of this.tracksOf(ch, 'all')) {
+          if (!track.file) continue;
+          keys.push(new URL(this.audioCacheUrl(track), location.href).href);
+        }
+      }
+      if (!keys.length) return;
+      const reg = await navigator.serviceWorker.ready;
+      const worker = navigator.serviceWorker.controller ?? reg.active;
+      worker?.postMessage({ type: AUDIO_MANIFEST_MESSAGE, keys });
+    } catch {
+      // A worker that cannot be reached is a cache that keeps a dead entry a
+      // while longer. Never a reason to fail opening a book.
+    }
+  }
+
   private async checkOfflineStatus(book: Book): Promise<boolean> {
     if (!('caches' in window)) return false;
     try {
@@ -1118,7 +1193,11 @@ export class PlayerEngine {
       const results = await Promise.all(probes.map(async (ch) => {
         // Unsigned on purpose: the cache is keyed without the signature (see
         // sw.js), so a probe must not carry one either or it would never match.
-        const url = (this.opts.audioBaseUrl ?? 'audio/') + ch.filename;  // full track, mode-independent
+        // Versioned for the same reason in reverse — the key DOES carry `?v=`,
+        // and a probe that omitted it would answer "not downloaded" for a book
+        // that is, or worse, "downloaded" from a hit on a dead render.
+        // full track, mode-independent.
+        const url = this.audioCacheUrl({ file: ch.filename ?? '', hash: ch.content_hash });
         return (await cache.match(url)) ?? (await cache.match(new URL(url, location.href).href));
       }));
       return results.length > 0 && results.every(Boolean);
@@ -1164,15 +1243,17 @@ export class PlayerEngine {
 
       for (const ch of book.chapters) {
         // Both tracks, mode-independent: offline must work in either mode.
-        const files = [ch.filename, ch.summary?.filename].filter(Boolean) as string[];
-        for (const file of files) {
-          const abs = new URL((this.opts.audioBaseUrl ?? 'audio/') + file, location.href).href;
+        for (const track of this.tracksOf(ch, 'all')) {
+          if (!track.file) continue;
+          const abs = new URL(this.audioCacheUrl(track), location.href).href;
           if (await cache.match(abs)) continue;   // resume picks up cleanly
           // Fetch WITH the signature, store WITHOUT it: the bytes are the same
           // object however they were authorized, so a later signature still
-          // finds them and an expired one never re-downloads 141 hours.
+          // finds them and an expired one never re-downloads 141 hours. The
+          // VERSION stays on both sides — it names which render these bytes
+          // are, which is the one thing an offline copy must not lose.
           const r = await fetch(withMediaQuery(abs, this.mediaQuery()));
-          if (!r.ok) throw new Error(`fetch ${file} failed`);
+          if (!r.ok) throw new Error(`fetch ${track.file} failed`);
           const blob = await r.blob();
           await cache.put(abs, new Response(blob, { headers: r.headers }));
         }
@@ -1229,6 +1310,10 @@ export class PlayerEngine {
     const bt = Math.max(0, Math.min(p.bookTime || 0, this.bookDur()));
     const startIdx = findChapterIdxAt(this.currentBook, bt, this.summaryMode);
     this.loadChapter(startIdx, bt - this.chStart(this.currentBook.chapters[startIdx]), false);
+
+    // The worker cannot know which renders are current — it sees URLs, not
+    // manifests — so the page that does know tells it, once per book open.
+    void this.announceAudioManifest();
 
     // Guarded: openBook runs per book and per host re-render, and each
     // unguarded call would stack another rAF loop forever.

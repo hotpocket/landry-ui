@@ -76,7 +76,7 @@ Three entry points, and they cover different things:
   reports which suites are *parity* suites and which are *feature* suites, and
   the classification is derived from how each one resolves the player on disk.
 - individual feature suites (`node test/playback-recovery.test.mjs`,
-  `search`, `book-menu`, `offline-download`, `reading-progress`) — behaviour that
+  `search`, `book-menu`, `chapter-menu`, `offline-download`, `reading-progress`) — behaviour that
   frozen vanilla never had, so they load `audiobook/player/` directly.
 
 Suites worth knowing by name: `scene-pause` (the hold yields to a tap),
@@ -86,7 +86,11 @@ service worker streams, caps and never poisons), `playback-recovery`
 (recovery obeys an explicit pause, a hanging request is recovered, failures are
 recorded to `rs-diag`), `storage-blocked` (the player mounts when the
 `localStorage` GETTER throws — iOS Safari's "Block All Cookies" — which is a
-class of defect no desktop browser can exhibit), and `reading-title` (a long
+class of defect no desktop browser can exhibit), `chapter-menu` (the per-chapter
+menu and the chapter deep link — right-click, hold and Shift+F10 each have to
+leave tap-to-play and the scrubber's hold alone, and the menu must not be
+clipped by the scrolling pane it lives in; spec: `docs/spec-chapter-list.md`),
+and `reading-title` (a long
 chapter title wraps to two lines and moves no control — it mounts the player the way books.landry.bot
 does, a flex item under an `overflow-x: hidden` host, because a standalone page
 cannot exhibit the min-content blowout it exists to catch).

@@ -1,6 +1,6 @@
 # The chapter list — what it is, and every state it is allowed to be in
 
-**Status:** v1, 2026-08-26. Written because books.landry.bot's `docs/ui-spec-v1.md`
+**Status:** v1.1, 2026-08-26. Written because books.landry.bot's `docs/ui-spec-v1.md`
 describes the player from the outside only and names that as an open question:
 
 > **This document has not been checked against the player's own interior.**

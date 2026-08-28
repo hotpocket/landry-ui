@@ -331,8 +331,8 @@ await p.close();
 // --- H: touch --------------------------------------------------------------
 /** Synthetic touch. Playwright's touchscreen only taps, and the timing between
  *  down and up is the whole point. `at` is a fraction across the element. */
-async function hold(page, selector, { holdMs = 500, at = 0.5, moveAfter = 0 } = {}) {
-  return page.evaluate(async ({ selector, holdMs, at, moveAfter }) => {
+async function hold(page, selector, { holdMs = 500, at = 0.5, moveAfter = 0, click = true } = {}) {
+  return page.evaluate(async ({ selector, holdMs, at, moveAfter, click }) => {
     const el = document.querySelector(selector);
     const r = el.getBoundingClientRect();
     const x = r.left + r.width * at, y = r.top + r.height / 2;
@@ -352,9 +352,39 @@ async function hold(page, selector, { holdMs = 500, at = 0.5, moveAfter = 0 } = 
     // The click a real browser synthesises after a tap. Dispatched here because
     // synthetic touch events do not produce one, and "the hold must not also
     // play the chapter" is precisely a question about that click.
-    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    //
+    // `click: false` is the other half of that question, and it is not a
+    // hypothetical: a finger that drags off after the press has already fired
+    // lifts without a tap, and Android suppresses the click outright when it
+    // raises its own context menu at the end of a long press. Whatever the
+    // hold left behind has to survive a click that never comes.
+    if (click) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     await sleep(60);
-  }, { selector, holdMs, at, moveAfter });
+  }, { selector, holdMs, at, moveAfter, click });
+}
+
+/** A real tap: down, up, and the click the engine synthesises from the pair.
+ *  A bare click() would skip the touch entirely, which is the half of the
+ *  sequence a reader's finger actually sends first. */
+async function tap(page, selector) {
+  return page.evaluate(async (selector) => {
+    const el = document.querySelector(selector);
+    const r = el.getBoundingClientRect();
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    const touch = (t) => {
+      const point = new Touch({ identifier: 2, target: el, clientX: x, clientY: y });
+      el.dispatchEvent(new TouchEvent(t, {
+        bubbles: true, cancelable: true,
+        touches: t === 'touchend' ? [] : [point],
+        changedTouches: [point], targetTouches: t === 'touchend' ? [] : [point],
+      }));
+    };
+    touch('touchstart');
+    await new Promise((r2) => setTimeout(r2, 40));
+    touch('touchend');
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    await new Promise((r2) => setTimeout(r2, 60));
+  }, selector);
 }
 
 {
@@ -379,6 +409,32 @@ async function hold(page, selector, { holdMs = 500, at = 0.5, moveAfter = 0 } = 
   await hold(t, '#chapter-list li:nth-child(2) .ch-scrubber', { holdMs: 500 });
   check(await menuCount(t) === 0,
     'H: a hold that begins on the scrubber is a seek, never a menu');
+  await t.close();
+}
+
+// --- H2: the hold whose click never arrives --------------------------------
+// The suppression the hold sets up is spent by the click that follows it. When
+// no click follows — the finger drags off after the press fired, or Android
+// swallows the tap under its own context menu — a suppression that is only ever
+// cleared by being consumed outlives its gesture, and the NEXT tap on any
+// chapter is eaten in silence. The reader taps a chapter, nothing happens, they
+// tap again and it works.
+{
+  const t = await newPage({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+  await boot(t);
+  await hold(t, '#chapter-list li:nth-child(3)', { holdMs: 500, moveAfter: 60, click: false });
+  check(await menuCount(t) === 1, 'H2: the hold still opens the menu with no click after it');
+  // Escape rather than a press outside: a press would be a second gesture, and
+  // this has to be about the first one alone.
+  await t.keyboard.press('Escape');
+  await t.waitForTimeout(120);
+  check(await menuCount(t) === 0, 'H2: the premise — the menu is closed before the tap');
+
+  const before = await activeChapter(t);
+  await tap(t, '#chapter-list li:nth-child(2)');
+  await t.waitForTimeout(250);
+  check(await activeChapter(t) === 1,
+    `H2: and the next tap plays its chapter, first time (was ${before}, now ${await activeChapter(t)})`);
   await t.close();
 }
 
@@ -451,8 +507,13 @@ const cachedNow = () => k.evaluate(async () => {
   return out.sort();
 });
 const before = await cachedNow();
-check(before.filter((u) => u.includes('/audio/')).length >= 2,
-  `K: the premise — this book's audio is cached (${JSON.stringify(before)})`);
+// Matched with the SAME predicate the flush assertion below uses. `/audio/`
+// was the wrong one: FOREIGN contains it too, so the premise counted the entry
+// the flush is required to leave alone and could be satisfied with a single
+// chapter of this book's in the caches — which would let the "it is gone"
+// assertion pass against a cache that barely held it in the first place.
+check(before.filter((u) => /chapter_000\d\.m4a$/.test(u)).length >= 2,
+  `K: the premise — this book's audio is cached, in both caches (${JSON.stringify(before)})`);
 
 await k.click('.ch-menu-item[data-action="flush"]');
 {

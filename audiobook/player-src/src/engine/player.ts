@@ -174,7 +174,17 @@ export class PlayerEngine {
   /**
    * A hold ends in a touchend, and the browser follows it with a click on the
    * same row — which is the gesture that plays a chapter. One flag, consumed by
-   * the next click, is the whole of "the menu did not also start playback".
+   * the next click, is most of "the menu did not also start playback".
+   *
+   * Consumed is not the only way it must end. The click is not promised: a
+   * finger that drags off after the press has already fired lifts without one,
+   * and Android suppresses the click outright when it raises its own context
+   * menu at the end of a long press. A flag that only ever ends by being
+   * consumed then outlives its gesture and eats the NEXT tap on any chapter —
+   * the reader taps, nothing happens, they tap again and it works. So the next
+   * touchstart clears it too (see renderChapterList), which is exact rather
+   * than a timeout: at touchstart no flag can belong to the gesture starting
+   * now, because this row's own is not set until its timer fires, later.
    */
   private suppressChapterClick = false;
 
@@ -984,6 +994,14 @@ export class PlayerEngine {
         if (e.target === scrubberEl) return;
         this.didDrag = false;
       });
+      // A new gesture ends any suppression the last one left behind. touchstart
+      // and NOT mousedown: the compatibility mouse events a browser synthesises
+      // after a touch arrive between touchend and the click, so clearing on
+      // mousedown would clear the flag the hold had just set and let the hold
+      // play the chapter as well as open the menu.
+      li.addEventListener('touchstart', () => {
+        this.suppressChapterClick = false;
+      }, { passive: true });
       const play = () => {
         this.setFollow(true, false);
         this.playChapterFrom(i, 0);

@@ -10,6 +10,7 @@ import { render, createRef } from 'preact';
 import { Shell, type ShellRefs } from './view/Shell.tsx';
 import { PlayerEngine } from './engine/player.ts';
 import { readDiag, type DiagEntry } from './core/diagnostics.ts';
+import { safeStorage } from './core/storage.ts';
 
 export interface PlayerChrome {
   back?: boolean;
@@ -22,6 +23,37 @@ export interface BookAction {
   id: string;
   label: string;
   onSelect: (book: unknown) => void;
+}
+
+/**
+ * What a host is told when a chapter action is chosen.
+ *
+ * `hash` is the player's own address for that chapter — the player owns the
+ * hash format, so a host that composed one itself would be a second copy of
+ * routing.ts free to drift from the first.
+ */
+export interface ChapterActionContext {
+  book: unknown;
+  chapter: unknown;
+  /** 0-based, the index into the book's chapters. */
+  chapterIndex: number;
+  /** 1-based, the ordinal the chapter list shows and the hash carries. */
+  chapterNumber: number;
+  /** '#/<slug>/<n>' — append to an origin and a shelf path for a full link. */
+  hash: string;
+}
+
+/**
+ * One entry in a host-supplied per-chapter menu.
+ *
+ * `label` may be a function because the same action can mean different things
+ * for different books — a link to a private book has to say so before it is
+ * chosen, not after. Still values and callbacks: no component crosses here.
+ */
+export interface ChapterAction {
+  id: string;
+  label: string | ((ctx: ChapterActionContext) => string);
+  onSelect: (ctx: ChapterActionContext) => void;
 }
 
 export interface PlayerOptions {
@@ -41,13 +73,20 @@ export interface PlayerOptions {
   chrome?: PlayerChrome;
   /** Absent means no menu is rendered at all — a static host cannot show one. */
   bookActions?: BookAction[];
+  /**
+   * Absent means a chapter row keeps the browser's own context menu. Taking
+   * that away and offering nothing in its place is strictly worse than leaving
+   * it, so the player only claims the gesture when a host has something to put
+   * behind it. See docs/spec-chapter-list.md §6.
+   */
+  chapterActions?: ChapterAction[];
 }
 
 function makeRefs(): ShellRefs {
   const keys = [
     'library', 'bookList', 'searchInput', 'searchResults', 'searchSpinner', 'playerView', 'readingProgress', 'readingProgressFill', 'backBtn', 'nowPlaying', 'bookTitle',
     'chapterTitle', 'chapterList', 'divider', 'contentArea', 'chapterPanel',
-    'transcriptPanel', 'readingChapter', 'modeToggle', 'modeFull', 'modeSummary',
+    'transcriptPanel', 'readingChapter', 'sourceLink', 'modeToggle', 'modeFull', 'modeSummary',
     'miniPrev', 'miniPlay', 'miniNext', 'tsDec', 'tsInc', 'followBtn',
     'readingBtn', 'transcriptChunks', 'currentTime', 'totalTime', 'trackBar',
     'progress', 'back30', 'prevBtn', 'playBtn', 'nextBtn', 'fwd30', 'speedBtn',
@@ -92,7 +131,10 @@ function init(opts: PlayerOptions): void {
     .RepoStoryFeedback;
   feedback?.init(opts.feedbackUrl);
 
-  const engine = new PlayerEngine(opts, refs, localStorage);
+  // safeStorage, not `localStorage`: reading that identifier THROWS on iOS
+  // Safari with "Block All Cookies", and a throw here is a mount that never
+  // happens — the whole page, not just the preferences it was reaching for.
+  const engine = new PlayerEngine(opts, refs, safeStorage());
   engine.start();
 }
 
@@ -104,10 +146,12 @@ function init(opts: PlayerOptions): void {
  * renders this back to the person who was listening.
  */
 function diagnostics(): DiagEntry[] {
+  // safeStorage already answers null for storage that is blocked or refuses to
+  // be read; the try stays for readDiag, which parses whatever it is handed.
   try {
-    return readDiag(localStorage.getItem('rs-diag'));
+    return readDiag(safeStorage().getItem('rs-diag'));
   } catch {
-    return [];   // storage blocked (private mode, embedded frame)
+    return [];
   }
 }
 

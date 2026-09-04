@@ -14,17 +14,19 @@
 import { render } from 'preact';
 import type { ShellRefs } from '../view/Shell.tsx';
 import { Library, type LibraryBook, type TreeNode } from '../view/Library.tsx';
-import type { PlayerOptions } from '../index.tsx';
+import type { PlayerOptions, ChapterAction, ChapterActionContext } from '../index.tsx';
 import {
   type Book, type Chapter,
   chapterStart, chapterDuration, bookDuration, findChapterIdxAt, bookHasSummaries,
   nonPositionalChapterId,
 } from '../core/clock.ts';
-import { bookSlug, bookIdxFromSlug, hashForBook, slugFromHash, collidingSlugs } from '../core/routing.ts';
+import {
+  bookSlug, bookIdxFromSlug, hashForBook, hashForChapter, routeFromHash, collidingSlugs,
+} from '../core/routing.ts';
 import { readProgress, writeProgress, readLastBook, type KeyValueStore } from '../core/progress.ts';
 import {
-  bookTranscript, chapterTranscript, chunksFor, findChunkAt,
-  type TranscriptData, type Chunk,
+  bookTranscript, chapterTranscript, chunksFor, findChunkAt, shortDate,
+  type TranscriptData, type Chunk, type ChapterTranscript,
 } from '../core/transcript.ts';
 import { isSceneBreak, crossedSceneBreak } from '../core/scene.ts';
 import {
@@ -32,10 +34,11 @@ import {
   STALL_TIMEOUT_MS, shouldRecoverFromStall,
 } from '../core/playback-policy.ts';
 import { appendDiag, type DiagEntry } from '../core/diagnostics.ts';
-import { longPressDrag, resizePanels, markProgrammaticScroll, exceededSlop } from './gestures.ts';
+import { longPress, longPressDrag, resizePanels, markProgrammaticScroll, exceededSlop } from './gestures.ts';
 import { TranscriptLoader, wireSearch } from './search-ui.ts';
 import { isRecent } from '../core/recency.ts';
-import { withMediaQuery, secondsUntilExpiry, withCacheBust } from '../core/media-url.ts';
+import { withMediaQuery, secondsUntilExpiry, withCacheBust, withContentVersion,
+  AUDIO_MANIFEST_MESSAGE } from '../core/media-url.ts';
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
 const TS_RATIO = 1.25;
@@ -164,6 +167,27 @@ export class PlayerEngine {
   private offlineState: Record<number, 'downloading' | 'downloaded' | 'error' | undefined> = {};
   private openMenuFor: number | null = null;
 
+  /** Which chapter row has its menu open, and the teardown that closes it. */
+  private chapterMenuFor: number | null = null;
+  private chapterMenuEl: HTMLElement | null = null;
+  private closeChapterMenuOutside: (() => void) | null = null;
+  /**
+   * A hold ends in a touchend, and the browser follows it with a click on the
+   * same row — which is the gesture that plays a chapter. One flag, consumed by
+   * the next click, is most of "the menu did not also start playback".
+   *
+   * Consumed is not the only way it must end. The click is not promised: a
+   * finger that drags off after the press has already fired lifts without one,
+   * and Android suppresses the click outright when it raises its own context
+   * menu at the end of a long press. A flag that only ever ends by being
+   * consumed then outlives its gesture and eats the NEXT tap on any chapter —
+   * the reader taps, nothing happens, they tap again and it works. So the next
+   * touchstart clears it too (see renderChapterList), which is exact rather
+   * than a timeout: at touchstart no flag can belong to the gesture starting
+   * now, because this row's own is not set until its timer fires, later.
+   */
+  private suppressChapterClick = false;
+
   constructor(opts: PlayerOptions, refs: ShellRefs, store: KeyValueStore) {
     this.opts = opts;
     this.refs = refs;
@@ -196,6 +220,9 @@ export class PlayerEngine {
    */
   private dispose(): void {
     this.disposed = true;          // stops the rAF loop at its next frame
+    // Document-level listeners outlive this engine's DOM by construction; a
+    // successor with its own menu would otherwise be closed by the dead one's.
+    this.closeChapterMenu(false);
     this.cancelStallWatch();
     // The scene-break hold is a pending setTimeout whose callback calls
     // audio.play(). Unsourcing below already makes that call reject harmlessly,
@@ -243,11 +270,43 @@ export class PlayerEngine {
     return this.currentBook?.chapters[this.currentChapterIdx] ?? null;
   }
 
+  /**
+   * The tracks a chapter has, as (file, content hash) pairs.
+   *
+   * One place that knows a track is a filename AND the hash of what that
+   * filename holds. Three call sites need the pairing — playback, the offline
+   * download, and the probe that decides whether the book reports itself
+   * downloaded — and when they disagree the badge reports on an object nobody
+   * will ever fetch.
+   */
+  private tracksOf(ch: Chapter, mode: 'active' | 'all'): { file: string; hash?: string }[] {
+    const full = { file: ch.filename ?? '', hash: ch.content_hash };
+    const summary = ch.summary?.filename
+      ? { file: ch.summary.filename, hash: ch.summary.content_hash }
+      : null;
+    if (mode === 'all') return summary ? [full, summary] : [full];
+    return [this.summaryMode && summary ? summary : full];
+  }
+
+  /**
+   * The URL a chapter's bytes are CACHED under: no signature, and versioned.
+   *
+   * This is the cache key, in the sense sw.js means it — the worker strips the
+   * signature parameters (and `rsr`) and keeps everything else, so this string
+   * is what an offline download is stored under and what a "have I got this?"
+   * probe has to ask for. The version is part of the key on purpose: a chapter
+   * re-rendered from corrected text must not be answerable by the copy of the
+   * previous render sitting in a reader's PWA.
+   */
+  private audioCacheUrl(track: { file: string; hash?: string }): string {
+    return withContentVersion((this.opts.audioBaseUrl ?? 'audio/') + track.file, track.hash);
+  }
+
   private audioUrlFor(ch: Chapter): string {
-    const file = this.summaryMode && ch.summary?.filename ? ch.summary.filename : ch.filename;
     // Appended after the filename, not onto the base: a query on the base would
     // address a different object entirely.
-    return withMediaQuery((this.opts.audioBaseUrl ?? 'audio/') + file, this.mediaQuery());
+    return withMediaQuery(this.audioCacheUrl(this.tracksOf(ch, 'active')[0]),
+                          this.mediaQuery());
   }
 
   /** The signature for the open book, if the host supplied one. */
@@ -342,6 +401,37 @@ export class PlayerEngine {
       if (autoplay) this.audio.play().catch(() => { /* ignore */ });
     } else {
       this.loadChapter(idx, timeInChapter, autoplay);
+    }
+  }
+
+  /**
+   * The "Original Source" link beside the Transcript heading.
+   *
+   * Presence of `source_url` is the whole condition. Books transcribed from
+   * something public (a YouTube episode, a talk) carry it per chapter; books of
+   * original prose carry nothing and get no link. Driven from the transcript
+   * rather than the manifest because the panel it sits in is the transcript's,
+   * and it must change with the chapter the panel is showing.
+   */
+  private setSourceLink(ct: ChapterTranscript | null): void {
+    const el = this.refs.sourceLink.current;
+    if (!el) return;
+    const url = ct?.source_url;
+    const exact = shortDate(ct?.source_date);
+    // '~' only ever precedes a date that exists; an empty stamp stays empty
+    // rather than becoming a lone tilde.
+    const stamp = exact && ct?.source_date_estimated ? `~${exact}` : exact;
+    // Both, or nothing. The date is the label now, so a source whose date
+    // nobody recorded has no text to click and must not render an empty
+    // anchor — and a date with no url is not a link at all.
+    if (url && stamp) {
+      el.href = url;
+      el.textContent = stamp;
+      el.style.display = '';
+    } else {
+      el.removeAttribute('href');
+      el.textContent = '';
+      el.style.display = 'none';
     }
   }
 
@@ -838,6 +928,10 @@ export class PlayerEngine {
     const list = this.refs.chapterList.current;
     const trackBar = this.refs.trackBar.current;
     if (!list || !this.currentBook || !trackBar) return;
+    // The rows are about to be destroyed and the menu lives inside one of them.
+    // Closing it first is what detaches its document-level listeners; dropping
+    // the node alone would leave them firing into nothing forever.
+    this.closeChapterMenu(false);
     list.innerHTML = '';
     this.chapterLis = [];
     this.chapterProgs = [];
@@ -900,12 +994,75 @@ export class PlayerEngine {
         if (e.target === scrubberEl) return;
         this.didDrag = false;
       });
+      // A new gesture ends any suppression the last one left behind. touchstart
+      // and NOT mousedown: the compatibility mouse events a browser synthesises
+      // after a touch arrive between touchend and the click, so clearing on
+      // mousedown would clear the flag the hold had just set and let the hold
+      // play the chapter as well as open the menu.
+      li.addEventListener('touchstart', () => {
+        this.suppressChapterClick = false;
+      }, { passive: true });
+      const play = () => {
+        this.setFollow(true, false);
+        this.playChapterFrom(i, 0);
+      };
       li.addEventListener('click', (e) => {
         if (this.didDrag) return;
         if (e.target === scrubberEl) return;
-        this.setFollow(true, false);
-        this.playChapterFrom(i, 0);
+        // The click a hold leaves behind. Consumed rather than tested for,
+        // because it arrives exactly once and only after a hold.
+        if (this.suppressChapterClick) { this.suppressChapterClick = false; return; }
+        if (this.chapterMenuFor !== null && (e.target as Element)?.closest?.('.ch-menu-items')) return;
+        play();
       });
+      // The row has been the primary control of an open book since the player
+      // existed, on a bare <li>: no role, no focus, no keys. The buttons around
+      // it are real buttons, which is why tabbing through a book looked like it
+      // worked. role+tabIndex rather than a <button> for the same reason as the
+      // library row — a button resets the typography of what it contains.
+      li.setAttribute('role', 'button');
+      li.tabIndex = 0;
+      // Moving to a row IS moving the list. The tick loop scrolls the playing
+      // chapter back into view on every frame until the reader has scrolled it
+      // themselves, and "themselves" meant wheel, touch-drag or the scrollbar —
+      // none of which a keyboard uses. Making these rows focusable added a
+      // fourth way to move the list, and without this the loop takes it
+      // straight back, inside a frame.
+      li.addEventListener('focus', () => { this.userScrolledChapters = true; });
+      li.setAttribute('aria-label', `Chapter ${i + 1}: ${ch.title ?? ''}`);
+      if (this.chapterMenuSize()) li.setAttribute('aria-haspopup', 'menu');
+      li.addEventListener('keydown', (e: KeyboardEvent) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          // Space scrolls the pane by default, which is the wrong answer for
+          // something announced as a button.
+          e.preventDefault();
+          play();
+          return;
+        }
+        // The keyboard's own context gesture. Chromium and Firefox synthesise a
+        // contextmenu event from these; Safari does not, and a reader with no
+        // mouse and no touchscreen would otherwise have no way in at all.
+        if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+          if (!this.chapterMenuSize()) return;
+          e.preventDefault();
+          this.openChapterMenu(i, li, true);
+        }
+      });
+      // Right-click, and the keyboard gesture where the browser synthesises one.
+      // preventDefault ONLY when there is something to show: taking the
+      // browser's menu away and offering nothing is worse than leaving it.
+      li.addEventListener('contextmenu', (e: MouseEvent) => {
+        if (!this.chapterMenuSize()) return;
+        e.preventDefault();
+        this.openChapterMenu(i, li, false);
+      });
+      // The same gesture by touch. A hold that begins on the scrubber is a
+      // seek — that control had the hold first, and it keeps it.
+      longPress(li, () => {
+        if (!this.chapterMenuSize()) return;
+        this.suppressChapterClick = true;
+        this.openChapterMenu(i, li, false);
+      }, (target) => target === scrubberEl || !!(target as Element)?.closest?.('.ch-scrubber'));
 
       list.appendChild(li);
       this.chapterLis.push(li);
@@ -921,6 +1078,201 @@ export class PlayerEngine {
     });
   }
 
+  // -------------------------------------------------------- chapter menu
+
+  private chapterActions(): ChapterAction[] {
+    return this.opts.chapterActions ?? [];
+  }
+
+  /**
+   * Whether this browser has a Cache Storage to download into or flush.
+   *
+   * Both of the player's own menu items are about that store, so where there
+   * is none they are hidden rather than offered and failed — a file:// bundle
+   * has none, and neither does iOS Safari with "Block All Cookies", which
+   * throws SecurityError from the GETTER. Hence the try around what looks like
+   * a plain truthiness test: `!!window.caches` is the throw, not a guard
+   * against it.
+   */
+  private canCache(): boolean {
+    try { return !!window.caches; } catch { return false; }
+  }
+
+  /**
+   * How many items the menu would have. Zero means the row does NOT claim the
+   * context gesture: taking the browser's own menu away and offering nothing
+   * in its place is strictly worse than leaving it.
+   */
+  private chapterMenuSize(): number {
+    return this.chapterActions().length
+      + (this.currentBookIdx !== null && this.canCache() ? 2 : 0);
+  }
+
+  /** What the host is told about a chapter, including its address. */
+  private chapterContext(i: number): ChapterActionContext {
+    const chapters = this.currentBook?.chapters ?? [];
+    return {
+      book: this.currentBook,
+      chapter: chapters[i],
+      chapterIndex: i,
+      chapterNumber: i + 1,
+      hash: hashForChapter(this.books, this.currentBookIdx, i + 1),
+    };
+  }
+
+  /**
+   * Open the menu on one chapter row.
+   *
+   * Idempotent for one reason that is not hypothetical: Android Chrome fires a
+   * contextmenu of its own at the end of a long press, so the hold and the
+   * event both arrive for the same gesture. Opening twice must be one open.
+   */
+  private openChapterMenu(i: number, li: HTMLElement, fromKeyboard: boolean): void {
+    if (this.chapterMenuFor === i) return;
+    this.closeChapterMenu(false);
+
+    const menu = document.createElement('div');
+    menu.className = 'ch-menu-items';
+    menu.setAttribute('role', 'menu');
+    const ctx = this.chapterContext(i);
+    const item = (id: string, label: string, own: boolean): HTMLButtonElement => {
+      const btn = document.createElement('button');
+      btn.className = 'ch-menu-item' + (own ? ' ch-menu-own' : '');
+      btn.setAttribute('role', 'menuitem');
+      btn.dataset.action = id;
+      btn.textContent = label;
+      menu.appendChild(btn);
+      return btn;
+    };
+
+    // The host's, first: they are what this page is for. A host item hands off
+    // somewhere else, so the menu goes.
+    for (const a of this.chapterActions()) {
+      const btn = item(a.id, typeof a.label === 'function' ? a.label(ctx) : a.label, false);
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Closed BEFORE the callback: the host may open a dialog of its own,
+        // and a menu left standing behind it is a second thing on screen
+        // nobody asked for. It also means onSelect runs inside the click, so a
+        // host may still call navigator.share, which needs the gesture.
+        this.closeChapterMenu(true);
+        a.onSelect(ctx);
+      });
+    }
+
+    // The player's own, after. They need nothing but the browser, so unlike the
+    // host's they are always here — and they REPORT IN PLACE rather than
+    // closing, because both take time and can fail and the label is the only
+    // place that can say so.
+    const bookIdx = this.currentBookIdx;
+    if (bookIdx !== null && this.canCache()) {
+      const dl = item('download', this.offlineLabel(bookIdx), true);
+      dl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const at = this.offlineState[bookIdx];
+        // 'error' stays live: the failed state IS the retry button, exactly as
+        // it is on the shelf.
+        if (at === 'downloading' || at === 'downloaded') return;
+        dl.textContent = 'Preparing…';
+        void this.downloadForOffline(bookIdx).then(() => {
+          // The menu may be long gone by the time a 700 MB book finishes.
+          if (dl.isConnected) dl.textContent = this.offlineLabel(bookIdx);
+        });
+      });
+
+      const fl = item('flush', 'Flush cached audio', true);
+      fl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        fl.textContent = 'Flushing…';
+        void this.flushBookAudio(bookIdx).then((n) => {
+          if (!fl.isConnected) return;
+          // Three different facts, said differently. "Nothing cached" is not a
+          // failure and "could not" is not an empty cache.
+          fl.textContent = n === null ? 'Could not flush'
+            : n === 0 ? 'Nothing cached'
+            : `Cleared ${n} file${n === 1 ? '' : 's'}`;
+        });
+      });
+    }
+
+    li.classList.add('menu-open');
+    li.setAttribute('aria-expanded', 'true');
+    li.appendChild(menu);
+    this.chapterMenuFor = i;
+    this.chapterMenuEl = menu;
+
+    // Positioned against the WINDOW, not against the pane.
+    //
+    // The pane scrolls and clips, and on a phone it is about 140px tall — less
+    // than this menu — so a menu placed inside it has two of its items cut off
+    // in either direction. Seen, not reasoned about: held on the last chapter
+    // of a twelve-chapter book at 390x844, two items could not be pressed.
+    // `position: fixed` escapes the clip while the node stays inside the row it
+    // belongs to, which is what keeps the DOM honest about whose menu this is.
+    //
+    // Measured and placed in the SAME FRAME it was appended, so there is no
+    // state where the menu is in one place and then another.
+    const r = li.getBoundingClientRect();
+    menu.style.left = `${Math.round(r.left)}px`;
+    menu.style.width = `${Math.round(r.width)}px`;
+    menu.style.top = `${Math.round(r.bottom)}px`;
+    const mh = menu.getBoundingClientRect().height;
+    if (r.bottom + mh > window.innerHeight && r.top - mh >= 0) {
+      menu.style.top = `${Math.round(r.top - mh)}px`;
+      menu.classList.add('above');
+    }
+
+    // mousedown/touchstart rather than click: a click on a menu item must reach
+    // the item, and a press anywhere else must close before it does anything
+    // else. Capture, so a handler that stops propagation cannot strand it open.
+    const outside = (e: Event) => {
+      if ((e.target as Element)?.closest?.('.ch-menu-items')) return;
+      this.closeChapterMenu(false);
+    };
+    // Escape is the way out of anything that floats, and the row it came from
+    // is where focus belongs afterwards.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      this.closeChapterMenu(true);
+    };
+    // A fixed menu does not travel with the row it points at, so anything that
+    // moves the row underneath it ends the menu rather than leaving it pointing
+    // at the wrong chapter. The reader scrolling the list IS them moving on.
+    const detach = () => this.closeChapterMenu(false);
+    const list = this.refs.chapterList.current;
+    document.addEventListener('mousedown', outside, true);
+    document.addEventListener('touchstart', outside, true);
+    document.addEventListener('keydown', onKey, true);
+    list?.addEventListener('scroll', detach, { passive: true });
+    window.addEventListener('resize', detach);
+    this.closeChapterMenuOutside = () => {
+      document.removeEventListener('mousedown', outside, true);
+      document.removeEventListener('touchstart', outside, true);
+      document.removeEventListener('keydown', onKey, true);
+      list?.removeEventListener('scroll', detach);
+      window.removeEventListener('resize', detach);
+    };
+
+    if (fromKeyboard) (menu.firstElementChild as HTMLElement | null)?.focus();
+  }
+
+  /** `restoreFocus` hands the row back to a keyboard; a mouse must not be moved. */
+  private closeChapterMenu(restoreFocus: boolean): void {
+    this.closeChapterMenuOutside?.();
+    this.closeChapterMenuOutside = null;
+    const i = this.chapterMenuFor;
+    this.chapterMenuFor = null;
+    this.chapterMenuEl?.remove();
+    this.chapterMenuEl = null;
+    if (i === null) return;
+    const li = this.chapterLis[i];
+    if (!li) return;
+    li.classList.remove('menu-open');
+    li.removeAttribute('aria-expanded');
+    if (restoreFocus && li.isConnected) li.focus();
+  }
+
   // ------------------------------------------------------------ transcript
 
   private renderTranscriptChunks(chapterIndex: number): void {
@@ -928,8 +1280,14 @@ export class PlayerEngine {
     if (!box || !this.currentBook) return;
     const bt = bookTranscript(this.transcriptData, this.currentBook);
     if (!bt) return;
-    const ct = chapterTranscript(bt, { id: chapterIndex - 1 });
+    // The chapter itself, not a synthetic { id }: chapterTranscript pairs on the
+    // source chapter number where both sides publish one, and an object literal
+    // carrying only a position silently opts this — the transcript pane, the
+    // surface the reader actually reads — out of the fix.
+    const forChapter = this.currentBook.chapters[chapterIndex - 1];
+    const ct = chapterTranscript(bt, forChapter ?? { id: chapterIndex - 1 });
     box.innerHTML = '';
+    this.setSourceLink(ct);
     if (!ct) return;
 
     for (const chunk of chunksFor(ct, this.summaryMode)) {
@@ -1037,7 +1395,10 @@ export class PlayerEngine {
     if (rp) rp.style.width = `${pct}%`;
     if (this.chapterScrubs[ch.id]) this.chapterScrubs[ch.id].style.left = `calc(${pct}% - 6px)`;
 
-    if (!this.userScrolledChapters) {
+    // …and never while a menu is open on a row: the menu is anchored to its row,
+    // so scrolling the list takes the menu off screen with it and leaves it
+    // open somewhere the reader cannot see.
+    if (!this.userScrolledChapters && this.chapterMenuFor === null) {
       const activeLi = this.chapterLis[ch.id];
       const chList = this.refs.chapterList.current;
       if (activeLi && chList) {
@@ -1073,6 +1434,48 @@ export class PlayerEngine {
 
   // --------------------------------------------------------------- offline
 
+  /**
+   * Tell the service worker which renders this book is currently made of.
+   *
+   * Versioned URLs stop a stale render from being SERVED; they do nothing
+   * about the one already sitting in Cache Storage. Superseded entries would
+   * otherwise accumulate for the life of the installation — an offline
+   * download of a 1,128-chapter book that is re-rendered chapter by chapter
+   * would eventually hold two copies of most of it, and the reader has no way
+   * to see that, let alone clear it.
+   *
+   * The page is the only side that knows the answer, so it sends it: the exact
+   * set of cache keys the book is made of right now. The worker drops audio
+   * entries in those same directories that are not in the set — which is both
+   * the superseded renders and anything left from before versioning existed.
+   *
+   * Everything here is best-effort and silent. `serviceWorker` is absent on
+   * file:// and inside some privacy modes, `controller` is null on the very
+   * first load before the worker has claimed the page (the next open sends it),
+   * and none of that is worth a line in the reader's console.
+   */
+  private async announceAudioManifest(): Promise<void> {
+    const book = this.currentBook;
+    if (!book) return;
+    try {
+      if (!('serviceWorker' in navigator)) return;
+      const keys: string[] = [];
+      for (const ch of book.chapters) {
+        for (const track of this.tracksOf(ch, 'all')) {
+          if (!track.file) continue;
+          keys.push(new URL(this.audioCacheUrl(track), location.href).href);
+        }
+      }
+      if (!keys.length) return;
+      const reg = await navigator.serviceWorker.ready;
+      const worker = navigator.serviceWorker.controller ?? reg.active;
+      worker?.postMessage({ type: AUDIO_MANIFEST_MESSAGE, keys });
+    } catch {
+      // A worker that cannot be reached is a cache that keeps a dead entry a
+      // while longer. Never a reason to fail opening a book.
+    }
+  }
+
   private async checkOfflineStatus(book: Book): Promise<boolean> {
     if (!('caches' in window)) return false;
     try {
@@ -1086,13 +1489,110 @@ export class PlayerEngine {
       const results = await Promise.all(probes.map(async (ch) => {
         // Unsigned on purpose: the cache is keyed without the signature (see
         // sw.js), so a probe must not carry one either or it would never match.
-        const url = (this.opts.audioBaseUrl ?? 'audio/') + ch.filename;  // full track, mode-independent
+        // Versioned for the same reason in reverse — the key DOES carry `?v=`,
+        // and a probe that omitted it would answer "not downloaded" for a book
+        // that is, or worse, "downloaded" from a hit on a dead render.
+        // full track, mode-independent.
+        const url = this.audioCacheUrl({ file: ch.filename ?? '', hash: ch.content_hash });
         return (await cache.match(url)) ?? (await cache.match(new URL(url, location.href).href));
       }));
       return results.length > 0 && results.every(Boolean);
     } catch {
       return false;
     }
+  }
+
+  /** The one vocabulary for offline state, so the shelf and the menu agree. */
+  private offlineLabel(bookIdx: number): string {
+    switch (this.offlineState[bookIdx]) {
+      case 'downloaded': return 'Downloaded \u2713';
+      case 'downloading': return 'Preparing\u2026';
+      case 'error': return 'Failed \u2014 retry \u21bb';
+      default: return 'Download for offline';
+    }
+  }
+
+  /**
+   * Where this book's audio lives, as path prefixes.
+   *
+   * Derived from the chapters rather than from a configured prefix, and matched
+   * by DIRECTORY rather than by filename, for one reason that decides the
+   * whole feature: a stale cache entry is precisely one whose name the current
+   * manifest no longer uses. Deleting the names the manifest has today would
+   * miss exactly the entries a flush exists to remove — and it keeps working
+   * when the audio URL becomes content-addressed, which is somebody else's
+   * change in flight.
+   *
+   * On a single-directory site (one book, `audio/`) this is the whole library,
+   * which is the honest answer there: the directory IS the book.
+   */
+  private audioDirsFor(book: Book): string[] {
+    const base = this.opts.audioBaseUrl ?? 'audio/';
+    const dirs = new Set<string>();
+    for (const ch of book?.chapters ?? []) {
+      const files = [ch.filename, (ch as { summary?: { filename?: string } }).summary?.filename];
+      for (const file of files) {
+        if (!file) continue;
+        try {
+          const path = new URL(base + file, location.href).pathname;
+          const cut = path.lastIndexOf('/');
+          if (cut > 0) dirs.add(path.slice(0, cut + 1));
+        } catch { /* a filename that is not a URL is not a cache entry either */ }
+      }
+    }
+    return [...dirs];
+  }
+
+  /**
+   * Throw away this device's cached audio for one book. Returns how many
+   * entries went, or null if Cache Storage could not be reached at all.
+   *
+   * Both caches, because a reader holding a stale chapter does not know or care
+   * which one it came from: 'audiobook-audio' is what an explicit download
+   * writes and 'audiobook-stream' is what listening leaves behind. The names
+   * and the key shape (the signature stripped) belong to sw.js; this is the
+   * page reaching into the same store the worker uses, and if that scheme
+   * changes this changes with it.
+   *
+   * `caches` is NAMED inside the try on purpose. iOS Safari with "Block All
+   * Cookies" throws SecurityError from the getter, so the usual guard —
+   * `if (!window.caches)` — throws on its way to deciding rather than deciding.
+   */
+  private async flushBookAudio(bookIdx: number): Promise<number | null> {
+    const book = this.books[bookIdx];
+    const dirs = this.audioDirsFor(book);
+    if (!dirs.length) return 0;
+    let removed = 0;
+    try {
+      const store = caches;
+      for (const name of ['audiobook-audio', 'audiobook-stream']) {
+        const cache = await store.open(name);
+        for (const req of await cache.keys()) {
+          let path = '';
+          try { path = new URL(req.url).pathname; } catch { continue; }
+          if (!dirs.some((d) => path.startsWith(d))) continue;
+          if (await cache.delete(req)) removed++;
+        }
+      }
+    } catch {
+      return null;
+    }
+
+    // The next byte has to come from the network, and two things stand between
+    // it and that: the prefetch this engine may be holding, and the element's
+    // own buffered copy of the chapter it is on. The reload carries the same
+    // cache-busting parameter the stall recovery uses, which is what makes it
+    // miss the browser's HTTP cache and the CDN edge as well as this store.
+    this.prefetchedKey = null;
+    if (this.currentBookIdx === bookIdx && this.currentBook) {
+      const wasPlaying = !this.audio.paused;
+      const at = this.audio.currentTime || 0;
+      this.loadChapter(this.currentChapterIdx, at, wasPlaying, true);
+    }
+    // 'Downloaded \u2713' is a promise, and it has just stopped being true.
+    this.offlineState[bookIdx] = undefined;
+    this.renderLibrary();
+    return removed;
   }
 
   private async downloadForOffline(bookIdx: number): Promise<void> {
@@ -1132,15 +1632,17 @@ export class PlayerEngine {
 
       for (const ch of book.chapters) {
         // Both tracks, mode-independent: offline must work in either mode.
-        const files = [ch.filename, ch.summary?.filename].filter(Boolean) as string[];
-        for (const file of files) {
-          const abs = new URL((this.opts.audioBaseUrl ?? 'audio/') + file, location.href).href;
+        for (const track of this.tracksOf(ch, 'all')) {
+          if (!track.file) continue;
+          const abs = new URL(this.audioCacheUrl(track), location.href).href;
           if (await cache.match(abs)) continue;   // resume picks up cleanly
           // Fetch WITH the signature, store WITHOUT it: the bytes are the same
           // object however they were authorized, so a later signature still
-          // finds them and an expired one never re-downloads 141 hours.
+          // finds them and an expired one never re-downloads 141 hours. The
+          // VERSION stays on both sides — it names which render these bytes
+          // are, which is the one thing an offline copy must not lose.
           const r = await fetch(withMediaQuery(abs, this.mediaQuery()));
-          if (!r.ok) throw new Error(`fetch ${file} failed`);
+          if (!r.ok) throw new Error(`fetch ${track.file} failed`);
           const blob = await r.blob();
           await cache.put(abs, new Response(blob, { headers: r.headers }));
         }
@@ -1163,7 +1665,37 @@ export class PlayerEngine {
 
   // ------------------------------------------------------------------ nav
 
-  openBook(idx: number, updateUrl = true): void {
+  /**
+   * The chapter a hash asks for, or null.
+   *
+   * Out of range answers null rather than clamping: a link to chapter 90 of an
+   * 80-chapter book is a link to a book that has changed shape, and dropping
+   * the reader at the end is a worse answer than dropping them where they were.
+   */
+  private chapterIdxFor(bookIdx: number, chapter: number | null): number | null {
+    if (chapter == null) return null;
+    const chapters = this.books[bookIdx]?.chapters ?? [];
+    const i = chapter - 1;
+    return chapters[i] ? i : null;
+  }
+
+  /**
+   * Spend the chapter segment: the address goes back to naming the book.
+   *
+   * The segment is a doorway, not a bookmark (docs/spec-chapter-list.md §6).
+   * Left in place it would survive the listen, and a reader sent to chapter 5
+   * who has reached chapter 8 would be thrown back to 5 by a reload — breaking
+   * the promise the hash exists to keep. replaceState, not pushState: arriving
+   * by a link is one history entry, and a Back that lands on the same page is
+   * a trap.
+   */
+  private spendChapterHash(idx: number): void {
+    const target = hashForBook(this.books, idx);
+    if (location.hash === target) return;
+    history.replaceState(null, '', target || location.pathname + location.search);
+  }
+
+  openBook(idx: number, updateUrl = true, chapterIdx: number | null = null): void {
     this.currentBook = this.books[idx];
     this.currentBookIdx = idx;
     this.lastActiveChapterId = null;
@@ -1194,9 +1726,18 @@ export class PlayerEngine {
     const box = this.refs.transcriptChunks.current;
     if (box) box.innerHTML = '';
 
+    // A chapter asked for by URL wins over the stored position, and starts at
+    // the chapter's beginning: whoever sent the link meant the chapter, not
+    // wherever this reader happened to stop in it. autoplay stays false either
+    // way — arriving is not being played at.
     const bt = Math.max(0, Math.min(p.bookTime || 0, this.bookDur()));
-    const startIdx = findChapterIdxAt(this.currentBook, bt, this.summaryMode);
-    this.loadChapter(startIdx, bt - this.chStart(this.currentBook.chapters[startIdx]), false);
+    const startIdx = chapterIdx ?? findChapterIdxAt(this.currentBook, bt, this.summaryMode);
+    const offset = chapterIdx == null ? bt - this.chStart(this.currentBook.chapters[startIdx]) : 0;
+    this.loadChapter(startIdx, offset, false);
+
+    // The worker cannot know which renders are current — it sees URLs, not
+    // manifests — so the page that does know tells it, once per book open.
+    void this.announceAudioManifest();
 
     // Guarded: openBook runs per book and per host re-render, and each
     // unguarded call would stack another rAF loop forever.
@@ -1219,6 +1760,7 @@ export class PlayerEngine {
   }
 
   showLibrary(updateUrl = true): void {
+    this.closeChapterMenu(false);
     this.saveProgress();
     this.audio.pause();
     this.currentBook = null;
@@ -1238,11 +1780,14 @@ export class PlayerEngine {
   }
 
   private applyUrlState = (): void => {
-    const slug = slugFromHash(location.hash);
-    if (slug) {
-      const idx = bookIdxFromSlug(this.books, slug);
+    const route = routeFromHash(location.hash);
+    if (route.slug) {
+      const idx = bookIdxFromSlug(this.books, route.slug);
       if (idx >= 0) {
-        if (idx !== this.currentBookIdx) this.openBook(idx, false);
+        const chIdx = this.chapterIdxFor(idx, route.chapter);
+        if (idx !== this.currentBookIdx) this.openBook(idx, false, chIdx);
+        else if (chIdx !== null) this.loadChapter(chIdx, 0, false);
+        if (route.chapter !== null) this.spendChapterHash(idx);
         return;
       }
     }
@@ -1353,10 +1898,11 @@ export class PlayerEngine {
       window.addEventListener('popstate', () => activeEngine?.applyUrlState());
     }
 
-    const slug = slugFromHash(location.hash);
-    const hashIdx = slug ? bookIdxFromSlug(this.books, slug) : -1;
+    const route = routeFromHash(location.hash);
+    const hashIdx = route.slug ? bookIdxFromSlug(this.books, route.slug) : -1;
     if (hashIdx >= 0) {
-      this.openBook(hashIdx, false);
+      this.openBook(hashIdx, false, this.chapterIdxFor(hashIdx, route.chapter));
+      if (route.chapter !== null) this.spendChapterHash(hashIdx);
     } else if (this.opts.autoOpenLast !== false) {
       // Resuming is right on a cold load and wrong when a host has just routed
       // the reader to the library on purpose. Hosts that route for themselves

@@ -80,16 +80,54 @@ export function hashForBook(books: BookIdentity[], idx: number | null): string {
   return '#/' + encodeURIComponent(bookSlug(books[idx]));
 }
 
+/** What a hash names: a book, and optionally one chapter of it. */
+export interface HashRoute {
+  slug: string | null;
+  /** 1-based, the ordinal the chapter list shows. null when unnamed. */
+  chapter: number | null;
+}
+
+/**
+ * Read '#/<slug>' or '#/<slug>/<n>'.
+ *
+ * Split BEFORE decoding. `slug` is host-supplied and may contain a '/', which
+ * hashForBook percent-encodes on the way out — splitting the decoded string
+ * would eat the slug and open the wrong book, or none.
+ *
+ * A tail that is not a plain 1-based ordinal degrades to "no chapter" and keeps
+ * the BOOK. Every one of these runs on the boot path, where the cost of being
+ * strict is a reader who was sent a link and got a library.
+ */
+export function routeFromHash(hash: string): HashRoute {
+  const m = /^#\/([^/]*)(?:\/(.*))?$/.exec(hash || '');
+  if (!m || !m[1]) return { slug: null, chapter: null };
+  let slug: string;
+  try {
+    slug = decodeURIComponent(m[1]);
+  } catch {
+    // A hand-edited or truncated hash ('#/%') makes decodeURIComponent throw.
+    // An escaping URIError here is a blank player rather than a bad route.
+    return { slug: null, chapter: null };
+  }
+  const n = m[2] !== undefined && /^\d+$/.test(m[2]) ? Number(m[2]) : 0;
+  return { slug, chapter: n >= 1 ? n : null };
+}
+
 /** The slug a hash names, or null for the library. */
 export function slugFromHash(hash: string): string | null {
-  const m = /^#\/(.+)$/.exec(hash || '');
-  if (!m) return null;
-  // A hand-edited or truncated hash ('#/%') makes decodeURIComponent throw.
-  // start() calls this before the first book opens, so an escaping URIError is
-  // a blank player rather than a bad route — the library is the honest answer.
-  try {
-    return decodeURIComponent(m[1]);
-  } catch {
-    return null;
-  }
+  return routeFromHash(hash).slug;
+}
+
+/**
+ * The hash for one chapter of one book, 1-based.
+ *
+ * The chapter is an ENTRY parameter, not a bookmark: the player spends it on
+ * arrival and rewrites the address to hashForBook. See docs/spec-chapter-list.md
+ * §6 — keeping it would make a reload throw away position within a chapter,
+ * which is the promise the hash exists to keep.
+ */
+export function hashForChapter(books: BookIdentity[], idx: number | null, chapter: number | null): string {
+  const base = hashForBook(books, idx);
+  if (!base || chapter == null || !(chapter >= 1)) return base;
+  return base + '/' + Math.floor(chapter);
 }

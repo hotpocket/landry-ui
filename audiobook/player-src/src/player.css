@@ -51,7 +51,11 @@ body:not(.rs-embedded-page) { margin: 0; padding: 0; font-family: -apple-system,
 .book-item .progress-dot.complete { background: #34d399; }
 
 /* Download for offline button */
-.dl-btn { background: none; border: 1px solid #333; color: #888; cursor: pointer; font-size: 0.85rem; padding: 0.3rem 0.7rem; border-radius: 6px; transition: all 0.15s; min-width: 8rem; text-align: center; white-space: nowrap; }
+/* An icon the size of the menu button beside it. It was 8rem wide with a word
+   in it, which made "download this" the loudest thing on a shelf row; the
+   action moved to the chapter menu and what is left here is the state report.
+   Sized in one place so the two controls in .book-actions stay a pair. */
+.dl-btn { background: none; border: 1px solid #333; color: #888; cursor: pointer; font-size: 0.95rem; line-height: 1; padding: 0.3rem 0; border-radius: 6px; transition: all 0.15s; min-width: 0; width: 1.9rem; text-align: center; white-space: nowrap; }
 .dl-btn:hover { color: #4a9eff; border-color: #4a9eff; }
 .dl-btn.downloading { color: #4a9eff; border-color: #4a9eff; cursor: default; }
 .dl-btn.downloaded { color: #34d399; border-color: #34d399; cursor: default; }
@@ -165,6 +169,20 @@ body:not(.rs-embedded-page) { margin: 0; padding: 0; font-family: -apple-system,
    row instead of overflowing the panel's hidden edge. */
 .transcript-panel-header { display: flex; align-items: center; padding: 0.5rem 0.75rem; flex-shrink: 0; flex-wrap: wrap; row-gap: 0.25rem; }
 .transcript-panel-header h3 { font-size: 0.75rem; font-weight: 400; color: #555; text-transform: uppercase; letter-spacing: 0.1em; }
+/* "Original Source" — sits immediately right of the Transcript heading and is
+   styled as its quiet sibling, not as another control: the header's buttons are
+   bordered, and giving this a border would read as a fourth toggle. Only books
+   transcribed from something public render it at all (transcript source_url);
+   the engine hides it otherwise, so it must not reserve space when hidden. */
+.source-link { margin-left: 0.6rem; font-size: 0.62rem; color: #4a9eff;
+  text-decoration: none; letter-spacing: 0.06em; white-space: nowrap;
+  font-variant-numeric: tabular-nums; border-bottom: 1px solid transparent;
+  transition: color 0.15s, border-color 0.15s; }
+.source-link:hover { color: #7ab8ff; border-bottom-color: #7ab8ff; }
+.source-link:focus-visible { outline: 2px solid #4a9eff; outline-offset: 2px; }
+
+/* Reading mode drops the "Transcript" heading; the link is still the reader's
+   way back to the original, so it stays. */
 .th-spacer { flex: 1; min-width: 0; }
 .follow-btn, .reading-btn, .mini-play-btn, .mode-btn { white-space: nowrap; }
 .mode-toggle { display: inline-flex; gap: 0.25rem; margin-left: 0.75rem; }
@@ -512,4 +530,82 @@ body:not(.rs-embedded-page) { margin: 0; padding: 0; font-family: -apple-system,
   position: relative;
   z-index: 1;
   pointer-events: none;
+}
+
+/* Per-chapter menu ---------------------------------------------------------
+   The row's primary gesture plays the chapter and its scrubber's hold seeks
+   inside it, so the menu is the secondary gesture: right-click, a hold away
+   from the scrubber, or the keyboard's context gesture on a focused row. See
+   docs/spec-chapter-list.md §6.
+
+   The row clips its own overflow so a long title ellipsises; a menu inside it
+   would be clipped by exactly that rule, so the row with a menu open stops
+   clipping and rises above its neighbours for as long as the menu is there. */
+.chapter-list li {
+  /* iOS answers a long press on selectable content with its own callout. The
+     row is already unselectable; this stops the callout too, so the hold that
+     opens this menu is not competing with one of Safari's. */
+  -webkit-touch-callout: none;
+}
+.chapter-list li.menu-open { overflow: visible; z-index: 6; background: #202020; }
+/* Focus has to be visible: the rows are keyboard controls now, and an
+   invisible focus ring on a sixty-item list is a list nobody can navigate. */
+.chapter-list li:focus-visible { outline: 2px solid #4a9eff; outline-offset: -2px; }
+
+.ch-menu-items {
+  /* fixed, not absolute: the pane this row lives in scrolls and clips, and on a
+     phone it is shorter than this menu — inside it, two items are cut off
+     whichever way the menu opens. Placed by the engine, against the window.
+     Width follows the ROW: a narrower panel let the next row's title run
+     alongside it, which reads as clipped text and a mis-render rather than as a
+     menu on top of a list. Seen, not reasoned about, at 390px. */
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: #1c1c1c;
+  border: 1px solid #333;
+  /* The accent edge is the side touching the row that opened it — the only
+     thing on screen that says which chapter this menu is about. */
+  border-top: 2px solid #4a9eff;
+  border-radius: 0 0 6px 6px;
+  padding: 0.25rem;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.6);
+}
+/* Near the bottom of the pane the menu opens upwards instead. Decided in the
+   frame it is appended, from measurements that are already available — never
+   corrected after a paint. */
+/* Opened upwards: the accent edge moves to the side still touching the row. */
+.ch-menu-items.above {
+  border-top: 1px solid #333;
+  border-bottom: 2px solid #4a9eff;
+  border-radius: 6px 6px 0 0;
+}
+.ch-menu-item {
+  background: none;
+  border: 0;
+  color: #ddd;
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  padding: 0.45rem 0.6rem;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ch-menu-item:hover, .ch-menu-item:focus-visible { background: #2a2a2a; color: #fff; }
+@media (pointer: coarse) {
+  /* A finger, not a cursor. */
+  .ch-menu-item { padding: 0.7rem 0.75rem; font-size: 0.9rem; }
+}
+
+/* The player's own menu items — download and flush — sit below the host's,
+   separated by a hairline so "what this site offers" and "what this device can
+   do" do not read as one list. */
+.ch-menu-item.ch-menu-own:first-child { border-top: 0; }
+.ch-menu-items .ch-menu-item.ch-menu-own + .ch-menu-item.ch-menu-own { border-top: 0; }
+.ch-menu-item:not(.ch-menu-own) + .ch-menu-item.ch-menu-own {
+  border-top: 1px solid #2e2e2e;
+  margin-top: 0.25rem;
+  padding-top: 0.6rem;
 }

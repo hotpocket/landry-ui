@@ -85,3 +85,24 @@ status: active
       had, and its only feedback is a `title` attribute, invisible on touch.
       Deliberately NOT fixed: vanilla is frozen (see RETIREMENT.md). Listed so
       nobody rediscovers it and thinks it was missed.
+
+## From 2026-08-25 (the iPhone that rendered nothing)
+
+- [ ] **`~/bin/iphone` has no tracked home and no test.** It is the standing
+      check for web UI against a browser engine that can *refuse* (real WebKit
+      under iPhone emulation; see `~/.claude/CLAUDE.md` § "Web UI is not
+      finished until a browser that REFUSES has seen it"). Like `filmstrip` and
+      `sso` it lives only in `~/bin`, which is not version-controlled — so it
+      does not survive a machine change, which is exactly what the
+      durable-over-accurate rule exists to prevent. Blocked on a decision only
+      the owner can make: which repo adopts it (`setup-kit` and `gstack` are
+      both plausible, and they imply different homes for its test —
+      `~/bin/sso`'s convention is `bin/tests/test_sso.sh`). The test would
+      assert the bootstrap runs, that the `no-storage` pass actually refuses,
+      and that divergence exits non-zero, pinned against a local fixture page
+      rather than production.
+- [ ] **Keyboard cannot activate a chapter-menu item.** Row `keydown` eats
+      Enter/Space from inside `.ch-menu-items` (plays the chapter, host action
+      never fires). Guard like the click path, add the G-section assertion,
+      rebuild. Details in `CLAUDE.md` → Known defects. Found on PR #3,
+      2026-09-04.

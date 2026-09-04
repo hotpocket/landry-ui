@@ -87,10 +87,23 @@ function TreeLevel({ node, ...props }: { node: TreeNode } & LibraryProps) {
 
 function BookItem({ book, idx, ...p }: { book: LibraryBook; idx: number } & LibraryProps) {
   const offline = p.offlineState[idx];
-  const dlLabel = offline === 'downloaded' ? 'Downloaded ✓'
-    : offline === 'downloading' ? 'Preparing…'
-    : offline === 'error' ? 'Failed — retry ↻'
-    : 'Download ⇣';
+  // An icon, not a word. This was a 128px pill on every row, sitting beside the
+  // title and reading as the primary thing to do with a book — which it is not:
+  // the primary thing to do with a book is open it. The action itself now has a
+  // home in the chapter menu (docs/spec-chapter-list.md §6); what stays here is
+  // the at-a-glance REPORT of offline state, and a way in for a reader who is
+  // choosing what to take on a journey and is on the shelf, not inside a book.
+  // The two are never on screen together.
+  const dlGlyph = offline === 'downloaded' ? '✓'
+    : offline === 'downloading' ? '⋯'
+    : offline === 'error' ? '↻'
+    : '⇣';
+  // The name is what a screen reader reads and what a hover explains; the glyph
+  // carries none of it, so this is not decoration.
+  const dlName = offline === 'downloaded' ? 'Downloaded — available offline'
+    : offline === 'downloading' ? 'Download in progress'
+    : offline === 'error' ? 'Download failed — click to retry'
+    : 'Download all chapters for offline';
   const menuOpen = p.openMenuFor === idx;
 
   return (
@@ -125,17 +138,15 @@ function BookItem({ book, idx, ...p }: { book: LibraryBook; idx: number } & Libr
       <div class="book-actions">
         <button
           class={'dl-btn' + (offline ? ' ' + offline : '')}
-          title={offline === 'downloaded' ? 'Available offline'
-            : offline === 'error' ? 'Download failed — tap to retry'
-            : 'Download all chapters for offline'}
+          title={dlName}
+          aria-label={dlName}
           onClick={(e) => {
             e.stopPropagation();
             // 'error' stays clickable: the failed state IS the retry button.
             if (offline === 'downloading' || offline === 'downloaded') return;
             p.onDownload(idx);
           }}
-          dangerouslySetInnerHTML={{ __html: dlLabel }}
-        />
+        >{dlGlyph}</button>
         {p.bookActions?.length ? (
           <div class="book-menu">
             <button

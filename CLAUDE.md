@@ -7,6 +7,13 @@ the books site, read `change_request.md` in the `books` repo first — it carrie
 the build pipeline (`player-src` → `build.mjs` → committed artifacts) and how
 the shell picks the player up.
 
+This repo is the **player** in a larger audiobook constellation: `bookshelf`
+owns book text and metadata, `chatterbook` is the narration engine and builds
+the site data (`books.json`, `transcripts.json`), and `landry.bot/books`,
+`karagame` and `brandonlandry` are the consuming sites. The map of how they
+fit together lives in `$GIT_HOME/bookshelf/SYSTEM.md` — read it there rather
+than restating it here.
+
 ## Conventions
 
 - Components live under a feature directory (e.g. `audiobook/`) with platform subdirectories (`vanilla/`, `react/`, `flutter/`).
@@ -76,7 +83,7 @@ Three entry points, and they cover different things:
   reports which suites are *parity* suites and which are *feature* suites, and
   the classification is derived from how each one resolves the player on disk.
 - individual feature suites (`node test/playback-recovery.test.mjs`,
-  `search`, `book-menu`, `offline-download`, `reading-progress`) — behaviour that
+  `search`, `book-menu`, `chapter-menu`, `offline-download`, `reading-progress`) — behaviour that
   frozen vanilla never had, so they load `audiobook/player/` directly.
 
 Suites worth knowing by name: `scene-pause` (the hold yields to a tap),
@@ -84,7 +91,29 @@ Suites worth knowing by name: `scene-pause` (the hold yields to a tap),
 the closest a headless test gets to the screen going off), `sw-cache` (the
 service worker streams, caps and never poisons), `playback-recovery`
 (recovery obeys an explicit pause, a hanging request is recovered, failures are
-recorded to `rs-diag`), and `reading-title` (a long chapter title wraps to two
-lines and moves no control — it mounts the player the way books.landry.bot
+recorded to `rs-diag`), `storage-blocked` (the player mounts when the
+`localStorage` GETTER throws — iOS Safari's "Block All Cookies" — which is a
+class of defect no desktop browser can exhibit), `chapter-menu` (the per-chapter
+menu and the chapter deep link — right-click, hold and Shift+F10 each have to
+leave tap-to-play and the scrubber's hold alone, and the menu must not be
+clipped by the scrolling pane it lives in; spec: `docs/spec-chapter-list.md`),
+and `reading-title` (a long
+chapter title wraps to two lines and moves no control — it mounts the player the way books.landry.bot
 does, a flex item under an `overflow-x: hidden` host, because a standalone page
 cannot exhibit the min-content blowout it exists to catch).
+
+## Known defects (open, merged knowingly)
+
+- **Keyboard cannot activate a chapter-menu item.** The row's `keydown`
+  handler in `engine/player.ts` (Enter/Space → play) does not return early
+  when the event comes from inside `.ch-menu-items`, the way the click and
+  touch handlers do. Probed 2026-09-04: focus a menu item, press Enter or
+  Space — the chapter plays, the host action never fires, the menu stays
+  open. Fix: the same `closest('.ch-menu-items')` guard the click path has,
+  plus an assertion in `test/chapter-menu.test.mjs` section G that Enter on a
+  focused item fires the host action (the suite only presses keys on rows,
+  which is why it did not see this). Found by CodeRabbit on PR #3.
+- **`setSourceLink` does not check the URL scheme.** `source_url` from
+  `transcripts.json` goes straight to `href`; a `javascript:` value would run.
+  The file is built by chatterbook, not user input, so low risk — an
+  http/https check is a one-liner if wanted.

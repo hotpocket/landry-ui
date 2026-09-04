@@ -101,3 +101,19 @@ and `reading-title` (a long
 chapter title wraps to two lines and moves no control — it mounts the player the way books.landry.bot
 does, a flex item under an `overflow-x: hidden` host, because a standalone page
 cannot exhibit the min-content blowout it exists to catch).
+
+## Known defects (open, merged knowingly)
+
+- **Keyboard cannot activate a chapter-menu item.** The row's `keydown`
+  handler in `engine/player.ts` (Enter/Space → play) does not return early
+  when the event comes from inside `.ch-menu-items`, the way the click and
+  touch handlers do. Probed 2026-09-04: focus a menu item, press Enter or
+  Space — the chapter plays, the host action never fires, the menu stays
+  open. Fix: the same `closest('.ch-menu-items')` guard the click path has,
+  plus an assertion in `test/chapter-menu.test.mjs` section G that Enter on a
+  focused item fires the host action (the suite only presses keys on rows,
+  which is why it did not see this). Found by CodeRabbit on PR #3.
+- **`setSourceLink` does not check the URL scheme.** `source_url` from
+  `transcripts.json` goes straight to `href`; a `javascript:` value would run.
+  The file is built by chatterbook, not user input, so low risk — an
+  http/https check is a one-liner if wanted.

@@ -101,4 +101,8 @@ status: active
       assert the bootstrap runs, that the `no-storage` pass actually refuses,
       and that divergence exits non-zero, pinned against a local fixture page
       rather than production.
-
+- [ ] **Keyboard cannot activate a chapter-menu item.** Row `keydown` eats
+      Enter/Space from inside `.ch-menu-items` (plays the chapter, host action
+      never fires). Guard like the click path, add the G-section assertion,
+      rebuild. Details in `CLAUDE.md` → Known defects. Found on PR #3,
+      2026-09-04.

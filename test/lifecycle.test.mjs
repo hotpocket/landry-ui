@@ -106,12 +106,18 @@ await page.evaluate(() => {
   window.__before = Object.keys(localStorage)
     .filter((k) => k.startsWith('rs-progress-'))
     .map((k) => localStorage.getItem(k));
-  localStorage.removeItem('rs-progress-0');
+  // Cleared by PREFIX, not by name. A parity suite cannot name the key: the
+  // preact player files progress under the book's own id, frozen vanilla under
+  // its position in the library. What both must do is write one.
+  for (const k of Object.keys(localStorage)) {
+    if (k.startsWith('rs-progress-')) localStorage.removeItem(k);
+  }
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
   document.dispatchEvent(new Event('visibilitychange'));
 });
-const savedOnHide = await page.evaluate(() => localStorage.getItem('rs-progress-0'));
-check(savedOnHide !== null, 'A: going hidden writes progress');
+const savedOnHide = await page.evaluate(() =>
+  Object.keys(localStorage).some((k) => k.startsWith('rs-progress-')));
+check(savedOnHide, 'A: going hidden writes progress');
 
 // --- B/C: freeze, thaw, clock recovers ------------------------------------
 const tBefore = await page.evaluate(() => document.querySelector('audio').currentTime);

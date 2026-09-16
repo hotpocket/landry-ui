@@ -20,8 +20,11 @@ import {
   chapterStart, chapterDuration, bookDuration, findChapterIdxAt, bookHasSummaries,
   nonPositionalChapterId,
 } from '../core/clock.ts';
-import { bookSlug, bookIdxFromSlug, hashForBook, slugFromHash, collidingSlugs } from '../core/routing.ts';
-import { readProgress, writeProgress, readLastBook, type KeyValueStore } from '../core/progress.ts';
+import { bookSlug, bookId, bookIdxFromSlug, hashForBook, slugFromHash, collidingSlugs } from '../core/routing.ts';
+import {
+  readProgress, writeProgress, readLastBookId, clearLastBook, migrateLegacyProgress,
+  type KeyValueStore,
+} from '../core/progress.ts';
 import {
   bookTranscript, chapterTranscript, chunksFor, findChunkAt,
   type TranscriptData, type Chunk,
@@ -257,10 +260,24 @@ export class PlayerEngine {
 
   // ------------------------------------------------------------- progress
 
+  /**
+   * The key a book's saved position is filed under — its own id, not its place
+   * in the library. Everything that reads or writes progress goes through here,
+   * so there is exactly one line in the player that decides what "this book"
+   * means to storage.
+   */
+  private bookKey(idx: number): string {
+    const book = this.books[idx];
+    // Out of range is reachable from a stale index held across a re-init; an
+    // unopenable key is a miss, which reads as the start of a book nobody will
+    // open, rather than a throw.
+    return book ? bookId(book) : '';
+  }
+
   private saveProgress = (): void => {
     if (!this.currentBook || this.currentBookIdx === null) return;
     const ch = this.currentChapter();
-    writeProgress(this.store, this.currentBookIdx, {
+    writeProgress(this.store, this.bookKey(this.currentBookIdx), {
       bookTime: this.bookTime(),
       duration: this.bookDur(),
       chapterIdx: this.currentChapterIdx,
@@ -818,7 +835,7 @@ export class PlayerEngine {
         tree: this.opts.tree as TreeNode | undefined,
         formatTime,
         progressStatus: (i) => {
-          const p = readProgress(this.store, i).progress;
+          const p = readProgress(this.store, this.bookKey(i)).progress;
           return p > 0.98 ? 'complete' : p > 0.01 ? 'in-progress' : '';
         },
         offlineState: this.offlineState,
@@ -1184,7 +1201,7 @@ export class PlayerEngine {
     const hasSummaries = bookHasSummaries(this.currentBook);
     const toggle = this.refs.modeToggle.current;
     if (toggle) toggle.style.display = hasSummaries ? '' : 'none';
-    const p = readProgress(this.store, idx);
+    const p = readProgress(this.store, this.bookKey(idx));
     this.summaryMode = hasSummaries &&
       (p.summary !== undefined ? !!p.summary : this.store.getItem('rs-summary') === '1');
     this.refs.modeFull.current?.classList.toggle('on', !this.summaryMode);
@@ -1223,7 +1240,7 @@ export class PlayerEngine {
     this.audio.pause();
     this.currentBook = null;
     this.currentBookIdx = null;
-    this.store.setItem('rs-last-book', '');
+    clearLastBook(this.store);
     if (updateUrl) this.setUrl(null);
     this.refs.playerView.current?.classList.remove('active');
     const lib = this.refs.library.current;
@@ -1300,6 +1317,10 @@ export class PlayerEngine {
   start(): void {
     const r = this.refs;
     this.checkManifest();
+    // Before anything reads a position — renderLibrary draws a progress bar per
+    // book — carry any index-keyed records from the old scheme onto their
+    // books. This is the first moment the index→id map exists.
+    migrateLegacyProgress(this.store, this.books.map((b) => bookId(b)));
     this.loadTranscripts(this.opts.transcriptUrl);
 
     r.backBtn.current?.addEventListener('click', () => this.showLibrary());
@@ -1361,8 +1382,11 @@ export class PlayerEngine {
       // Resuming is right on a cold load and wrong when a host has just routed
       // the reader to the library on purpose. Hosts that route for themselves
       // pass autoOpenLast:false; the stored position is left alone either way.
-      const last = readLastBook(this.store);
-      if (last !== null && last < this.books.length) this.openBook(last);
+      const last = readLastBookId(this.store);
+      const idx = last === null ? -1 : this.books.findIndex((b) => bookId(b) === last);
+      // A book that has left the library resumes nothing, rather than whoever
+      // stands in its old place.
+      if (idx >= 0) this.openBook(idx);
     }
   }
 

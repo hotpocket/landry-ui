@@ -9,6 +9,8 @@
  */
 
 export interface BookIdentity {
+  /** The host's immutable id for the book, when it has one. */
+  book_id?: string;
   slug?: string;
   title?: string;
 }
@@ -92,4 +94,18 @@ export function slugFromHash(hash: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * A book's PERSISTENCE identity — the name under which its saved position is
+ * filed, as opposed to `bookSlug`, which names it in a URL.
+ *
+ * `book_id` is what books.landry.bot's /api/library hands over, and it is
+ * immutable: it survives a retitle, a re-sort and a move between categories,
+ * all of which change a slug. A host that has none (a standalone chatterbook
+ * build, the test fixture) falls back to the slug, which is the only stable
+ * name such a library has.
+ */
+export function bookId(book: BookIdentity): string {
+  return book.book_id ? String(book.book_id) : bookSlug(book);
 }

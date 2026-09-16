@@ -10,6 +10,7 @@ import { render, createRef } from 'preact';
 import { Shell, type ShellRefs } from './view/Shell.tsx';
 import { PlayerEngine } from './engine/player.ts';
 import { readDiag, type DiagEntry } from './core/diagnostics.ts';
+import { safeStore } from './core/progress.ts';
 
 export interface PlayerChrome {
   back?: boolean;
@@ -92,7 +93,11 @@ function init(opts: PlayerOptions): void {
     .RepoStoryFeedback;
   feedback?.init(opts.feedbackUrl);
 
-  const engine = new PlayerEngine(opts, refs, localStorage);
+  // Wrapped, and the wrapper takes a thunk: on iOS Safari with "Block All
+  // Cookies" the throw is naming `localStorage`, not calling a method on it, so
+  // passing the value here would throw on the boot path and leave a blank page
+  // with no console to explain it.
+  const engine = new PlayerEngine(opts, refs, safeStore(() => localStorage));
   engine.start();
 }
 

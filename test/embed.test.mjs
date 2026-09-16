@@ -177,6 +177,12 @@ async function open(opts, host, viewport) {
 // saveProgress writes it on timeupdate, which never fires against a stub audio
 // file. What is under test is what the player does with a stored value, not
 // how the value got there.
+//
+// It is seeded in the index-keyed `rs-last-book` form because that is the one
+// form BOTH players understand, which is what keeps this a parity assertion:
+// frozen vanilla reads it as an index, and the preact player migrates it to
+// the book's own id on start. Which key each ends up holding is therefore not
+// asserted here — that is core-progress's job.
 {
   const seed = async (opts) => {
     pending = page(opts, false);
@@ -198,8 +204,9 @@ async function open(opts, host, viewport) {
   check(await b2.p.$('#player-view.active') === null,
     'G: autoOpenLast:false starts on the library instead');
   check(await b2.p.$('.book-item') !== null, 'G: the library is rendered');
-  const kept = await b2.p.evaluate(() => localStorage.getItem('rs-last-book'));
-  check(kept === '0', 'G: opting out does not erase the stored position');
+  const kept = await b2.p.evaluate(() =>
+    localStorage.getItem('rs-last-book-id') ?? localStorage.getItem('rs-last-book'));
+  check(kept !== null && kept !== '', 'G: opting out does not erase the stored position');
   await b2.ctx.close();
 }
 

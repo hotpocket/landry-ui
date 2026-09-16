@@ -319,3 +319,28 @@ test('T2. safeStore passes through to a working store', () => {
     'the real store really is written, not shadowed by the memory fallback');
   assert.equal(readProgress(s, 'A').bookTime, 10);
 });
+
+test('U. a written record is stamped with when this browser wrote it', () => {
+  // savedAt exists so a record from ANOTHER device can be compared against
+  // this one. Without it "is the server's copy newer?" has no local operand,
+  // and the only answers available are "always prompt" and "never prompt".
+  const s = fakeStore();
+  writeProgress(s, 'alpha', snap(90), () => '2026-09-16T12:00:00.000Z');
+  assert.equal(readProgress(s, 'alpha').savedAt, '2026-09-16T12:00:00.000Z');
+});
+
+test('U2. savedAt moves forward on every save, not only the first', () => {
+  const s = fakeStore();
+  writeProgress(s, 'alpha', snap(10), () => '2026-09-16T12:00:00.000Z');
+  writeProgress(s, 'alpha', snap(20), () => '2026-09-16T12:05:00.000Z');
+  assert.equal(readProgress(s, 'alpha').savedAt, '2026-09-16T12:05:00.000Z');
+});
+
+test('U3. the default clock is the real one, in ISO — the host passes none', () => {
+  const s = fakeStore();
+  const before = Date.now();
+  writeProgress(s, 'alpha', snap(10));
+  const at = Date.parse(readProgress(s, 'alpha').savedAt);
+  assert.ok(at >= before - 1000 && at <= Date.now() + 1000,
+    'a stamp nobody can parse is a stamp no comparison can use');
+});

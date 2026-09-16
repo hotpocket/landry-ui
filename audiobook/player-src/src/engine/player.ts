@@ -26,6 +26,10 @@ import {
   type KeyValueStore,
 } from '../core/progress.ts';
 import {
+  RemoteProgress, offerText, leavesAChapter, chapterIdxForN, landingSeconds,
+  type RemoteRecord,
+} from '../core/remote-progress.ts';
+import {
   bookTranscript, chapterTranscript, chunksFor, findChunkAt,
   type TranscriptData, type Chunk,
 } from '../core/transcript.ts';
@@ -167,11 +171,42 @@ export class PlayerEngine {
   private offlineState: Record<number, 'downloading' | 'downloaded' | 'error' | undefined> = {};
   private openMenuFor: number | null = null;
 
+  /**
+   * The same reader's position on their other devices. Injected by the host or
+   * absent entirely — absent is the signed-out path, and it is today's
+   * behaviour exactly: localStorage only, no anonymous id, no requests.
+   */
+  private remote: RemoteProgress;
+  /** The record the offer row is currently showing, so the buttons know it. */
+  private offered: RemoteRecord | null = null;
+  /**
+   * Which book the loaded chapter belongs to. `currentBookIdx` is already the
+   * NEW book by the time openBook loads its first chapter, so it cannot answer
+   * "am I leaving a chapter of the book I was in?" — and without that, opening
+   * a second book would record the first book's position against the second.
+   */
+  private chapterBookIdx: number | null = null;
+
   constructor(opts: PlayerOptions, refs: ShellRefs, store: KeyValueStore) {
     this.opts = opts;
     this.refs = refs;
     this.store = store;
     this.books = opts.books as Book[];
+
+    this.remote = new RemoteProgress({
+      backend: opts.remoteProgress,
+      store,
+      device: opts.remoteProgressDevice,
+      contentVersionFor: (id) => {
+        const book = this.books.find((b) => bookId(b) === id) as
+          { content_version?: string } | undefined;
+        return book?.content_version;
+      },
+      // The same ring buffer every playback failure goes to. A phone with its
+      // screen off has no console, and a sync that silently never works would
+      // otherwise be indistinguishable from one that has nothing to say.
+      onDiag: (ev, extra) => this.diag(ev, extra),
+    });
 
     this.summaryMode = store.getItem('rs-summary') === '1';
     this.followTranscript = store.getItem('rs-follow') !== '0';
@@ -287,6 +322,92 @@ export class PlayerEngine {
     });
   };
 
+  /**
+   * Tell the server where the listener is.
+   *
+   * Called from acts a PERSON took — pause, leaving a chapter, leaving the
+   * book, the page going away — and from nothing else. Never from `timeupdate`
+   * and never from the 5-second local timer: a PUT runs `readable_book()`,
+   * which on a public book is a GSI query, so a per-tick cadence would bill a
+   * query per second per listener to record a position nobody asked for.
+   */
+  private remotePut = (): void => {
+    if (!this.currentBook || this.currentBookIdx === null) return;
+    const ch = this.currentChapter();
+    this.remote.put(this.bookKey(this.currentBookIdx), ch?.n ?? null, this.audio.currentTime || 0);
+  };
+
+  /**
+   * Everything a page that may not come back should record. Public because the
+   * page-level pagehide/visibility listeners reach it through `activeEngine`.
+   */
+  saveAndSync(): void {
+    this.saveProgress();
+    this.remotePut();
+  }
+
+  // ---------------------------------------------------- the other device
+
+  /**
+   * Show, or withdraw, the offer for the open book.
+   *
+   * Called when a book opens and again when `list()` lands, because either can
+   * be last. `readProgress` answers ZERO for a book with no record, which has
+   * no `savedAt` and no `chapterN` — so it reads as "nothing here to be newer
+   * than", which is the right answer for a book this browser has never opened.
+   */
+  private offerRemote(): void {
+    if (this.currentBookIdx === null) { this.hideOffer(); return; }
+    const id = this.bookKey(this.currentBookIdx);
+    const rec = this.remote.offer(id, readProgress(this.store, id));
+    if (!rec) { this.hideOffer(); return; }
+    this.offered = rec;
+    const row = this.refs.resumeOffer.current;
+    const text = this.refs.resumeOfferText.current;
+    if (text) text.textContent = offerText(rec, formatTime);
+    if (row) row.hidden = false;
+  }
+
+  private hideOffer(): void {
+    this.offered = null;
+    const row = this.refs.resumeOffer.current;
+    if (row) row.hidden = true;
+  }
+
+  /**
+   * The reader accepted. This is the ONLY path that moves them, and it is a
+   * tap: nothing here ever runs on its own.
+   */
+  private acceptOffer(): void {
+    const rec = this.offered;
+    if (!rec || !this.currentBook || this.currentBookIdx === null) return;
+    const idx = chapterIdxForN(this.currentBook.chapters, rec.chapterN);
+    this.hideOffer();
+    this.remote.accept(rec);
+    if (idx < 0) return;          // that chapter is not in this build of the book
+    const ch = this.currentBook.chapters[idx];
+    const t = landingSeconds(rec.seconds, this.chDur(ch));
+    // Saved BEFORE the load, not from the element afterwards: `currentTime` is
+    // still the old chapter's until loadedmetadata, so a save on the way out
+    // would write the position they just left.
+    writeProgress(this.store, this.bookKey(this.currentBookIdx), {
+      bookTime: this.chStart(ch) + t,
+      duration: this.bookDur(),
+      chapterIdx: idx,
+      chapterN: ch.n ?? null,
+      timeInChapter: t,
+      summary: this.summaryMode,
+    });
+    // Intent, not element state: accepting while a book is playing keeps it
+    // playing, and accepting while it is stopped does not start it.
+    this.loadChapter(idx, t, this.intendsPlayback());
+  }
+
+  private declineOffer(): void {
+    this.remote.dismiss(this.offered);
+    this.hideOffer();
+  }
+
   // ------------------------------------------------------------ chapters
 
   /**
@@ -297,6 +418,16 @@ export class PlayerEngine {
   private loadChapter(idx: number, timeInChapter: number, autoplay: boolean, bust = false): void {
     if (!this.currentBook) return;
     if (idx < 0 || idx >= this.currentBook.chapters.length) return;
+    // Leaving a chapter is a position worth keeping, and it is the LAST moment
+    // it exists: the element's clock resets the instant a new src lands. The
+    // book guard is what keeps the outgoing book's offset off the incoming
+    // book's row, and a reload of the same chapter (recovery, stall) is not a
+    // change and costs no request.
+    if (leavesAChapter({ bookIdx: this.chapterBookIdx, chapterIdx: this.currentChapterIdx },
+                       { bookIdx: this.currentBookIdx, chapterIdx: idx })) {
+      this.remotePut();
+    }
+    this.chapterBookIdx = this.currentBookIdx;
     this.cancelScenePause();
     this.currentChapterIdx = idx;
     this.pendingPlayAfterLoad = autoplay;
@@ -656,6 +787,8 @@ export class PlayerEngine {
     // cannot make anything go red. It is here because the line above claims it.
     this.cancelStallWatch();
     this.audio.pause();
+    // A pause is the strongest signal there is that this is where they stopped.
+    this.remotePut();
   }
 
   togglePlay = (): void => {
@@ -1181,6 +1314,10 @@ export class PlayerEngine {
   // ------------------------------------------------------------------ nav
 
   openBook(idx: number, updateUrl = true): void {
+    // Before anything is retargeted: the book being left has a position, and
+    // after the next line there is no way to say whose it was.
+    if (this.currentBookIdx !== null && this.currentBookIdx !== idx) this.remotePut();
+    this.hideOffer();
     this.currentBook = this.books[idx];
     this.currentBookIdx = idx;
     this.lastActiveChapterId = null;
@@ -1233,13 +1370,18 @@ export class PlayerEngine {
     } else {
       this.renderTranscriptChunks(this.currentChapterIdx + 1);
     }
+
+    // Last, so a host that opens a book before `list()` has landed still gets
+    // asked — start() calls this again when the records arrive.
+    this.offerRemote();
   }
 
   showLibrary(updateUrl = true): void {
-    this.saveProgress();
+    this.saveAndSync();
     this.audio.pause();
     this.currentBook = null;
     this.currentBookIdx = null;
+    this.hideOffer();
     clearLastBook(this.store);
     if (updateUrl) this.setUrl(null);
     this.refs.playerView.current?.classList.remove('active');
@@ -1339,6 +1481,8 @@ export class PlayerEngine {
     r.readingBtn.current?.addEventListener('click', () => this.setReadingMode(!this.readingMode));
     r.modeFull.current?.addEventListener('click', () => this.setSummaryMode(false));
     r.modeSummary.current?.addEventListener('click', () => this.setSummaryMode(true));
+    r.resumeOfferGo.current?.addEventListener('click', () => this.acceptOffer());
+    r.resumeOfferNo.current?.addEventListener('click', () => this.declineOffer());
 
     r.followBtn.current?.classList.toggle('on', this.followTranscript);
     this.applyTextSize();
@@ -1356,8 +1500,12 @@ export class PlayerEngine {
     if (!pageWired) {
       pageWired = true;
       window.addEventListener('beforeunload', () => activeEngine?.saveProgress());
-      // beforeunload does not fire on mobile tab discard; pagehide does.
-      window.addEventListener('pagehide', () => activeEngine?.saveProgress());
+      // beforeunload does not fire on mobile tab discard; pagehide does — and
+      // it is the last moment a phone gives anyone, so the remote record goes
+      // with the local one. What survives the page is the HOST's problem: the
+      // engine calls put() and the transport (keepalive, a beacon) is chosen
+      // where the credential lives.
+      window.addEventListener('pagehide', () => activeEngine?.saveAndSync());
       document.addEventListener('visibilitychange', () => activeEngine?.onVisibilityChange());
     }
 
@@ -1388,6 +1536,13 @@ export class PlayerEngine {
       // stands in its old place.
       if (idx >= 0) this.openBook(idx);
     }
+
+    // Background, and last. The library and the open book are already drawn
+    // from local storage; this only ever adds a question to them. Every failure
+    // is swallowed inside start() — an unhandled rejection on the boot path is
+    // a blank page for a reader with no console to say why — and the terminal
+    // catch here is the second half of the same rule.
+    this.remote.start().then(() => this.offerRemote()).catch(() => { /* never */ });
   }
 
   private wireSearchUi(): void {
@@ -1437,7 +1592,7 @@ export class PlayerEngine {
   /** Public so the visibility handler can reach it through activeEngine. */
   onVisibilityChange(): void {
     if (document.visibilityState === 'hidden') {
-      this.saveProgress();
+      this.saveAndSync();
     } else if (this.currentBook && this.audio.error) {
       // Coming back to a dead element: retry immediately with a fresh cap —
       // whatever starved it (frozen page, lapsed cookies) has had its chance.

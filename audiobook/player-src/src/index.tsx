@@ -11,6 +11,7 @@ import { Shell, type ShellRefs } from './view/Shell.tsx';
 import { PlayerEngine } from './engine/player.ts';
 import { readDiag, type DiagEntry } from './core/diagnostics.ts';
 import { safeStore } from './core/progress.ts';
+import type { RemoteProgressBackend } from './core/remote-progress.ts';
 
 export interface PlayerChrome {
   back?: boolean;
@@ -42,11 +43,28 @@ export interface PlayerOptions {
   chrome?: PlayerChrome;
   /** Absent means no menu is rendered at all — a static host cannot show one. */
   bookActions?: BookAction[];
+  /**
+   * Where this reader is in each book, ON THEIR OTHER DEVICES.
+   *
+   * Values and promises only — the engine never names `fetch`, because the host
+   * is the only layer that knows whether anyone is signed in, what a credential
+   * is, and which transport survives a page going away. ABSENT IS THE DEFAULT
+   * AND ABSENT IS TODAY'S BEHAVIOUR: a signed-out listener stays
+   * localStorage-only, and no anonymous id is minted for them.
+   */
+  remoteProgress?: RemoteProgressBackend;
+  /**
+   * A short label for THIS device, shown in the offer ("…on phone?"). Coarse by
+   * intent — phone/tablet/desktop. The host supplies it because the host is
+   * where a device class can be decided without fingerprinting anyone.
+   */
+  remoteProgressDevice?: string;
 }
 
 function makeRefs(): ShellRefs {
   const keys = [
     'library', 'bookList', 'searchInput', 'searchResults', 'searchSpinner', 'playerView', 'readingProgress', 'readingProgressFill', 'backBtn', 'nowPlaying', 'bookTitle',
+    'resumeOffer', 'resumeOfferText', 'resumeOfferGo', 'resumeOfferNo',
     'chapterTitle', 'chapterList', 'divider', 'contentArea', 'chapterPanel',
     'transcriptPanel', 'readingChapter', 'modeToggle', 'modeFull', 'modeSummary',
     'miniPrev', 'miniPlay', 'miniNext', 'tsDec', 'tsInc', 'followBtn',

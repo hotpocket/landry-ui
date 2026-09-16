@@ -31,6 +31,10 @@ export interface ShellRefs {
   playerView: RefObject<HTMLDivElement>;
   readingProgress: RefObject<HTMLDivElement>;
   readingProgressFill: RefObject<HTMLDivElement>;
+  resumeOffer: RefObject<HTMLDivElement>;
+  resumeOfferText: RefObject<HTMLSpanElement>;
+  resumeOfferGo: RefObject<HTMLButtonElement>;
+  resumeOfferNo: RefObject<HTMLButtonElement>;
   backBtn: RefObject<HTMLButtonElement>;
   nowPlaying: RefObject<HTMLDivElement>;
   bookTitle: RefObject<HTMLDivElement>;
@@ -101,6 +105,20 @@ export function Shell({ title, hideBackButton, hideNowPlaying, refs }: ShellProp
             outside reading mode. */}
         <div class="reading-progress" id="reading-progress" ref={refs.readingProgress}>
           <div class="reading-progress-fill" id="reading-progress-fill" ref={refs.readingProgressFill} />
+        </div>
+        {/* Where the same reader left this book on another device.
+            Non-blocking and hidden until there is something to say: an offer,
+            never a seek. A device that was paused for a month must not be able
+            to yank a listener mid-sentence because it woke up — so the merge is
+            last-write-wins, and the WIN is this row. */}
+        <div class="resume-offer" id="resume-offer" ref={refs.resumeOffer} hidden>
+          <span class="resume-offer-text" id="resume-offer-text" ref={refs.resumeOfferText} />
+          <button class="resume-offer-go" id="resume-offer-go" ref={refs.resumeOfferGo}>
+            Continue
+          </button>
+          <button class="resume-offer-no" id="resume-offer-no" ref={refs.resumeOfferNo}>
+            Dismiss
+          </button>
         </div>
         <button
           class="back-btn"

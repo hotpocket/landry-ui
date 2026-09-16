@@ -428,6 +428,63 @@ body:not(.rs-embedded-page) { margin: 0; padding: 0; font-family: -apple-system,
   background: #4a9eff;
 }
 
+/* The other device's offer ------------------------------------------------
+   One slim row at the top of the player view — above the back button and the
+   now-playing header, and on books.landry.bot (which hides both) the first
+   thing in the view. Shown only when a position saved elsewhere is both newer
+   and somewhere else. It is a question, not a state: there is no spinner, no
+   dimming and nothing behind it is disabled, because playback must never wait
+   on a network the listener cannot see.
+
+   Deliberately NOT in the reading-mode hide list with .back-btn and
+   .now-playing: those are chrome, and this is an unanswered question. A reader
+   who turned the chrome off still has to be able to say Continue or Dismiss,
+   and hiding it would leave the prompt pending with no way to answer it.
+
+   `[hidden]` is restated because `display: flex` below would otherwise beat the
+   user-agent's `[hidden] { display: none }` and leave an empty bar on every
+   book that has nothing to offer.
+
+   min-width: 0 on the text is the min-content rule the chapter title already
+   cost us once: a long device name would otherwise set the row's min-content
+   width and push the buttons out of the player. */
+.resume-offer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(74, 158, 255, 0.35);
+  border-radius: 6px;
+  background: rgba(74, 158, 255, 0.10);
+  font-size: 13px;
+  max-width: 100%;
+}
+
+.resume-offer[hidden] { display: none; }
+
+.resume-offer-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resume-offer-go,
+.resume-offer-no {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.resume-offer-go { border-color: #4a9eff; color: #4a9eff; }
+
 /* Library search ----------------------------------------------------------
    Searching is 10ms over 62k chunks; the cost is fetching transcripts that are
    not on the client yet. So the UI is built around arrival, not around waiting:

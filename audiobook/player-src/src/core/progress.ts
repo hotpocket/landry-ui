@@ -40,6 +40,16 @@ export interface ProgressRecord {
   chapterN?: number | null;
   timeInChapter?: number;
   summary?: boolean;
+  /**
+   * When THIS browser wrote the record, ISO, client clock.
+   *
+   * It exists to be compared against a record the same reader left on another
+   * device: without a local operand, "is the server's copy newer than mine?"
+   * has only two answers available to it, always and never, and both are
+   * wrong. The clock is the client's own and is not trusted for anything but
+   * this comparison — the server keeps its own `updated_at`.
+   */
+  savedAt?: string;
 }
 
 export interface ProgressSnapshot {
@@ -98,9 +108,17 @@ export function readProgress(store: KeyValueStore, bookId: string): ProgressReco
   }
 }
 
-export function writeProgress(store: KeyValueStore, bookId: string, s: ProgressSnapshot): void {
+/**
+ * `nowIso` is injected so a test can pin the stamp; every caller in the player
+ * takes the default. A stamp is written on EVERY save, not only the first —
+ * the comparison it feeds asks when this browser last moved, not when it first
+ * opened the book.
+ */
+export function writeProgress(store: KeyValueStore, bookId: string, s: ProgressSnapshot,
+                              nowIso: () => string = isoNow): void {
   set(store, KEY(bookId), JSON.stringify({
     bookId,
+    savedAt: nowIso(),
     bookTime: s.bookTime,
     progress: fraction(s.bookTime, s.duration),
     chapterIdx: s.chapterIdx,
@@ -224,6 +242,15 @@ export function safeStore(source: () => KeyValueStore | null | undefined): KeyVa
       try { raw()?.removeItem(key); } catch { /* blocked */ }
     },
   };
+}
+
+/** Guarded: `new Date()` cannot throw, but `toISOString` on an invalid date can. */
+function isoNow(): string {
+  try {
+    return new Date().toISOString();
+  } catch {
+    return '';
+  }
 }
 
 function get(store: KeyValueStore, key: string): string | null {

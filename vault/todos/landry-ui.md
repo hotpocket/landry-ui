@@ -85,3 +85,24 @@ status: active
       had, and its only feedback is a `title` attribute, invisible on touch.
       Deliberately NOT fixed: vanilla is frozen (see RETIREMENT.md). Listed so
       nobody rediscovers it and thinks it was missed.
+
+## From 2026-09-16 (progress follows the reader)
+
+- [ ] **Run the browser suites before deploying `470b79a`.** ai-3090 has no
+      node or Playwright, so `scripts/parity.sh`, `lifecycle`, `embed`,
+      `reading-progress` and `re-init` did not run; the offer row, the
+      accept-and-seek path and the `pause()` put call site are covered only by
+      the core decisions behind them. See
+      [[2026-09-16 - where-you-left-off-follows-you]].
+
+- [ ] **Withdraw an offer row once the reader listens on.** `put()` drops the
+      remote record from memory but a row already on screen stays, so a late
+      Continue moves the reader back to the other device's older position.
+      Informed and a tap, so within the rule — adding a fourth gate is a design
+      decision, not a bug.
+
+- [ ] **`contentVersion` is never populated.** The engine reads
+      `book.content_version`; `/api/library` (books) does not emit it, so the
+      PUT omits it and a re-rendered chapter cannot be told from the one the
+      position came from. Books-side change.
+

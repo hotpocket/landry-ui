@@ -10,8 +10,8 @@ import { render, createRef } from 'preact';
 import { Shell, type ShellRefs } from './view/Shell.tsx';
 import { PlayerEngine } from './engine/player.ts';
 import { readDiag, type DiagEntry } from './core/diagnostics.ts';
-import { safeStore } from './core/progress.ts';
 import type { RemoteProgressBackend } from './core/remote-progress.ts';
+import { safeStorage } from './core/storage.ts';
 
 export interface PlayerChrome {
   back?: boolean;
@@ -66,7 +66,7 @@ function makeRefs(): ShellRefs {
     'library', 'bookList', 'searchInput', 'searchResults', 'searchSpinner', 'playerView', 'readingProgress', 'readingProgressFill', 'backBtn', 'nowPlaying', 'bookTitle',
     'resumeOffer', 'resumeOfferText', 'resumeOfferGo', 'resumeOfferNo',
     'chapterTitle', 'chapterList', 'divider', 'contentArea', 'chapterPanel',
-    'transcriptPanel', 'readingChapter', 'modeToggle', 'modeFull', 'modeSummary',
+    'transcriptPanel', 'readingChapter', 'sourceLink', 'modeToggle', 'modeFull', 'modeSummary',
     'miniPrev', 'miniPlay', 'miniNext', 'tsDec', 'tsInc', 'followBtn',
     'readingBtn', 'transcriptChunks', 'currentTime', 'totalTime', 'trackBar',
     'progress', 'back30', 'prevBtn', 'playBtn', 'nextBtn', 'fwd30', 'speedBtn',
@@ -111,11 +111,7 @@ function init(opts: PlayerOptions): void {
     .RepoStoryFeedback;
   feedback?.init(opts.feedbackUrl);
 
-  // Wrapped, and the wrapper takes a thunk: on iOS Safari with "Block All
-  // Cookies" the throw is naming `localStorage`, not calling a method on it, so
-  // passing the value here would throw on the boot path and leave a blank page
-  // with no console to explain it.
-  const engine = new PlayerEngine(opts, refs, safeStore(() => localStorage));
+  const engine = new PlayerEngine(opts, refs, safeStorage());
   engine.start();
 }
 
@@ -127,10 +123,12 @@ function init(opts: PlayerOptions): void {
  * renders this back to the person who was listening.
  */
 function diagnostics(): DiagEntry[] {
+  // safeStorage already answers null for storage that is blocked or refuses to
+  // be read; the try stays for readDiag, which parses whatever it is handed.
   try {
-    return readDiag(localStorage.getItem('rs-diag'));
+    return readDiag(safeStorage().getItem('rs-diag'));
   } catch {
-    return [];   // storage blocked (private mode, embedded frame)
+    return [];
   }
 }
 

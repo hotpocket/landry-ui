@@ -30,8 +30,8 @@ import {
   type RemoteRecord,
 } from '../core/remote-progress.ts';
 import {
-  bookTranscript, chapterTranscript, chunksFor, findChunkAt,
-  type TranscriptData, type Chunk,
+  bookTranscript, chapterTranscript, chunksFor, findChunkAt, shortDate,
+  type TranscriptData, type Chunk, type ChapterTranscript,
 } from '../core/transcript.ts';
 import { isSceneBreak, crossedSceneBreak } from '../core/scene.ts';
 import {
@@ -490,6 +490,37 @@ export class PlayerEngine {
       if (autoplay) this.audio.play().catch(() => { /* ignore */ });
     } else {
       this.loadChapter(idx, timeInChapter, autoplay);
+    }
+  }
+
+  /**
+   * The "Original Source" link beside the Transcript heading.
+   *
+   * Presence of `source_url` is the whole condition. Books transcribed from
+   * something public (a YouTube episode, a talk) carry it per chapter; books of
+   * original prose carry nothing and get no link. Driven from the transcript
+   * rather than the manifest because the panel it sits in is the transcript's,
+   * and it must change with the chapter the panel is showing.
+   */
+  private setSourceLink(ct: ChapterTranscript | null): void {
+    const el = this.refs.sourceLink.current;
+    if (!el) return;
+    const url = ct?.source_url;
+    const exact = shortDate(ct?.source_date);
+    // '~' only ever precedes a date that exists; an empty stamp stays empty
+    // rather than becoming a lone tilde.
+    const stamp = exact && ct?.source_date_estimated ? `~${exact}` : exact;
+    // Both, or nothing. The date is the label now, so a source whose date
+    // nobody recorded has no text to click and must not render an empty
+    // anchor — and a date with no url is not a link at all.
+    if (url && stamp) {
+      el.href = url;
+      el.textContent = stamp;
+      el.style.display = '';
+    } else {
+      el.removeAttribute('href');
+      el.textContent = '';
+      el.style.display = 'none';
     }
   }
 
@@ -1080,6 +1111,7 @@ export class PlayerEngine {
     if (!bt) return;
     const ct = chapterTranscript(bt, { id: chapterIndex - 1 });
     box.innerHTML = '';
+    this.setSourceLink(ct);
     if (!ct) return;
 
     for (const chunk of chunksFor(ct, this.summaryMode)) {

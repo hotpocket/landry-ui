@@ -84,7 +84,9 @@ Suites worth knowing by name: `scene-pause` (the hold yields to a tap),
 the closest a headless test gets to the screen going off), `sw-cache` (the
 service worker streams, caps and never poisons), `playback-recovery`
 (recovery obeys an explicit pause, a hanging request is recovered, failures are
-recorded to `rs-diag`), and `reading-title` (a long chapter title wraps to two
-lines and moves no control — it mounts the player the way books.landry.bot
+recorded to `rs-diag`), `storage-blocked` (the player mounts when the
+`localStorage` GETTER throws — iOS Safari's "Block All Cookies" — which is a
+class of defect no desktop browser can exhibit), and `reading-title` (a long
+chapter title wraps to two lines and moves no control — it mounts the player the way books.landry.bot
 does, a flex item under an `overflow-x: hidden` host, because a standalone page
 cannot exhibit the min-content blowout it exists to catch).

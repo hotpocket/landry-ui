@@ -17,3 +17,10 @@ test('mixed incremental transcripts still show legacy chapters',()=>{
  const book={chapters:[legacy,{n:2,index:2,chunks:[]}]};
  assert.equal(chapterTranscript(book,{id:0,n:1}),legacy);
 });
+
+test('a null chapter number is unnumbered, not a number that matches null',()=>{
+ const legacy={index:1,chunks:[]};
+ const other={n:null,index:2,chunks:[]};
+ assert.equal(chapterTranscript({chapters:[other,legacy]},{id:0,n:null}),legacy);
+ assert.equal(chapterTranscript({chapters:[legacy]},{id:0,n:null}),legacy);
+});

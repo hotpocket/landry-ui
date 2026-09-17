@@ -54,6 +54,11 @@ try {
   await page.waitForFunction(()=>getComputedStyle(document.querySelector('#last-updated')).display==='none');
   assert.equal(await updated.textContent(),'');assert.equal(await updated.getAttribute('datetime'),null);assert.equal(await source.getAttribute('href'),null);pass++;
   await page.click('#mini-next-btn');assert.equal(await updated.isVisible(),false);pass++;
+  // Neither date: the row reserves nothing. Checked as footprint (width plus
+  // margins) rather than display, because a wrapper hidden only by :has()
+  // keeps its margin on engines without :has() (iOS Safari < 15.4).
+  const footprint=await page.evaluate(()=>{const el=document.querySelector('.transcript-dates');const cs=getComputedStyle(el);return el.getBoundingClientRect().width+parseFloat(cs.marginLeft)+parseFloat(cs.marginRight);});
+  assert.equal(footprint,0,'empty dates row reserves no space');pass++;
   await page.click('#mini-prev-btn');
   await page.click('#mini-prev-btn');
   await page.click('#mini-prev-btn');

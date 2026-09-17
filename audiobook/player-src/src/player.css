@@ -586,9 +586,11 @@ body:not(.rs-embedded-page) { margin: 0; padding: 0; font-family: -apple-system,
 }
 
 /* Keep the original linked date and this version's update time together.
-   Wrap within the pane on phones without widening the control row. */
+   Wrap within the pane on phones without widening the control row.
+   Spacing lives on the children, not the wrapper: a chapter with neither
+   date then reserves nothing, on every engine. A wrapper margin hidden by
+   :has() stays reserved where :has() is missing (iOS Safari < 15.4). */
 .transcript-dates { display: inline-flex; flex-wrap: wrap; align-items: baseline;
-  gap: 0.25rem 0.6rem; max-width: 100%; margin-left: 0.6rem; }
-.transcript-dates .source-link { margin-left: 0; }
+  row-gap: 0.25rem; max-width: 100%; }
+.transcript-dates > * { margin-left: 0.6rem; }
 .last-updated { font-size: 0.68rem; color: #999; }
-.transcript-dates:not(:has([datetime])):not(:has(a[href])) { display: none; }

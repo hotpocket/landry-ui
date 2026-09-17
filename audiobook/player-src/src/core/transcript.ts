@@ -92,12 +92,12 @@ export function chapterTranscript(
 ): ChapterTranscript | null {
   if (!bt?.chapters || !chapter) return null;
   // A subset or reordered manifest must not borrow another chapter's date.
-  if (chapter.n !== undefined) {
+  if (chapter.n != null) {
     const numbered = bt.chapters.find((c) => c.n === chapter.n);
     if (numbered) return numbered;
     // Incremental books mix new numbered transcripts with legacy entries.
     // Only an unnumbered entry may use the old positional contract.
-    return bt.chapters.find((c) => c.n === undefined && c.index === chapter.id + 1) ?? null;
+    return bt.chapters.find((c) => c.n == null && c.index === chapter.id + 1) ?? null;
   }
   return bt.chapters.find((c) => c.index === chapter.id + 1) ?? null;
 }

@@ -38,16 +38,24 @@ export function safeStorage(source: StorageSource = defaultSource): KeyValueStor
   // Written to only when `real` cannot take a value. Kept even when `real`
   // works, because a write can start failing partway through a session (quota)
   // and the reader should not watch their settings revert.
-  const shadow = new Map<string, string>();
+  const shadow = new Map<string, string | null>();
 
   return {
     getItem(key: string): string | null {
-      if (shadow.has(key)) return shadow.get(key) as string;
+      if (shadow.has(key)) return shadow.get(key) ?? null;
       if (!real) return null;
       try {
         return real.getItem(key);
       } catch {
         return null;
+      }
+    },
+    removeItem(key: string): void {
+      try {
+        real?.removeItem(key);
+        shadow.delete(key);
+      } catch {
+        shadow.set(key, null);
       }
     },
     setItem(key: string, value: string): void {

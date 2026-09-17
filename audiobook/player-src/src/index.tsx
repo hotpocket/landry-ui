@@ -66,7 +66,7 @@ function makeRefs(): ShellRefs {
     'library', 'bookList', 'searchInput', 'searchResults', 'searchSpinner', 'playerView', 'readingProgress', 'readingProgressFill', 'backBtn', 'nowPlaying', 'bookTitle',
     'resumeOffer', 'resumeOfferText', 'resumeOfferGo', 'resumeOfferNo',
     'chapterTitle', 'chapterList', 'divider', 'contentArea', 'chapterPanel',
-    'transcriptPanel', 'readingChapter', 'sourceLink', 'modeToggle', 'modeFull', 'modeSummary',
+    'transcriptPanel', 'readingChapter', 'sourceLink', 'lastUpdated', 'modeToggle', 'modeFull', 'modeSummary',
     'miniPrev', 'miniPlay', 'miniNext', 'tsDec', 'tsInc', 'followBtn',
     'readingBtn', 'transcriptChunks', 'currentTime', 'totalTime', 'trackBar',
     'progress', 'back30', 'prevBtn', 'playBtn', 'nextBtn', 'fwd30', 'speedBtn',

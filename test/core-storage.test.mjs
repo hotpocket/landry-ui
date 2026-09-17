@@ -98,3 +98,15 @@ test('I. a shadowed key stops shadowing once a write succeeds', () => {
   s.setItem('rs-textsize-n', '3');
   assert.equal(s.getItem('rs-textsize-n'), '3');
 });
+
+test('removal works for inaccessible storage and shadows a refused removal', () => {
+  const s = safeStorage(throwingGetter);
+  s.setItem('legacy', 'old');
+  s.removeItem('legacy');
+  assert.equal(s.getItem('legacy'), null);
+  const real = fakeStorage({ legacy: 'old' });
+  real.removeItem = () => { throw new Error('blocked'); };
+  const blocked = safeStorage(() => real);
+  blocked.removeItem('legacy');
+  assert.equal(blocked.getItem('legacy'), null);
+});

@@ -16,6 +16,9 @@ export interface Chunk {
 
 export interface ChapterTranscript {
   index: number;
+  n?: number;
+  /** Last publication of a changed chapter revision, in UTC. */
+  last_updated?: string;
   chunks: Chunk[];
   summary_chunks?: Chunk[];
   /** Where this chapter's text came from, when it came from something public.
@@ -45,6 +48,17 @@ export function shortDate(iso: string | null | undefined): string {
   return m ? `${m[1]}/${m[2]}/${m[3]}` : '';
 }
 
+/** Source dates stay date-only; revision dates name an instant in local time. */
+export function updatedDate(iso: string | null | undefined): string {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(iso)) return '';
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return '';
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+  }).format(date);
+}
+
 export interface BookTranscript {
   slug: string;
   chapters: ChapterTranscript[];
@@ -71,12 +85,20 @@ export function bookTranscript(
   return data.books.find((b) => b.slug === slug) ?? null;
 }
 
-/** The 0-based chapter id to 1-based transcript index conversion, in one place. */
+/** Match durable chapter numbers first, with positional fallback for old data. */
 export function chapterTranscript(
   bt: BookTranscript | null | undefined,
-  chapter: { id: number } | null | undefined,
+  chapter: { id: number; n?: number } | null | undefined,
 ): ChapterTranscript | null {
   if (!bt?.chapters || !chapter) return null;
+  // A subset or reordered manifest must not borrow another chapter's date.
+  if (chapter.n !== undefined) {
+    const numbered = bt.chapters.find((c) => c.n === chapter.n);
+    if (numbered) return numbered;
+    // Incremental books mix new numbered transcripts with legacy entries.
+    // Only an unnumbered entry may use the old positional contract.
+    return bt.chapters.find((c) => c.n === undefined && c.index === chapter.id + 1) ?? null;
+  }
   return bt.chapters.find((c) => c.index === chapter.id + 1) ?? null;
 }
 

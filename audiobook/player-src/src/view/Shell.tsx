@@ -46,6 +46,7 @@ export interface ShellRefs {
   transcriptPanel: RefObject<HTMLDivElement>;
   readingChapter: RefObject<HTMLDivElement>;
   sourceLink: RefObject<HTMLAnchorElement>;
+  lastUpdated: RefObject<HTMLTimeElement>;
   modeToggle: RefObject<HTMLSpanElement>;
   modeFull: RefObject<HTMLButtonElement>;
   modeSummary: RefObject<HTMLButtonElement>;
@@ -161,15 +162,18 @@ export function Shell({ title, hideBackButton, hideNowPlaying, refs }: ShellProp
                   transcript carries both; hidden by default so a book of
                   original prose never flashes a link before the engine hides
                   it. Text is set by the engine, per chapter. */}
-              <a
-                class="source-link"
-                id="source-link"
-                style="display:none"
-                target="_blank"
-                rel="noopener noreferrer"
-                ref={refs.sourceLink}
-              >
-              </a>
+              <span class="transcript-dates">
+                <a
+                  class="source-link"
+                  id="source-link"
+                  style="display:none"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  ref={refs.sourceLink}
+                >
+                </a>
+                <time id="last-updated" class="last-updated" style="display:none" ref={refs.lastUpdated} />
+              </span>
               <span class="mode-toggle" id="mode-toggle" style="display:none" ref={refs.modeToggle}>
                 <button class="mode-btn" id="mode-full" title="Full chapter audio + transcript" ref={refs.modeFull}>
                   Full

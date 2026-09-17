@@ -30,7 +30,7 @@ import {
   type RemoteRecord,
 } from '../core/remote-progress.ts';
 import {
-  bookTranscript, chapterTranscript, chunksFor, findChunkAt, shortDate,
+  bookTranscript, chapterTranscript, chunksFor, findChunkAt, shortDate, updatedDate,
   type TranscriptData, type Chunk, type ChapterTranscript,
 } from '../core/transcript.ts';
 import { isSceneBreak, crossedSceneBreak } from '../core/scene.ts';
@@ -522,6 +522,16 @@ export class PlayerEngine {
       el.textContent = '';
       el.style.display = 'none';
     }
+  }
+
+  private setLastUpdated(ct: ChapterTranscript | null): void {
+    const el = this.refs.lastUpdated.current;
+    if (!el) return;
+    const stamp = updatedDate(ct?.last_updated);
+    el.textContent = stamp ? `Last updated: ${stamp}` : '';
+    el.style.display = stamp ? '' : 'none';
+    if (stamp) el.dateTime = ct!.last_updated!;
+    else el.removeAttribute('datetime');
   }
 
   private setReadingChapterLabel(ch: Chapter | null): void {
@@ -1108,10 +1118,10 @@ export class PlayerEngine {
     const box = this.refs.transcriptChunks.current;
     if (!box || !this.currentBook) return;
     const bt = bookTranscript(this.transcriptData, this.currentBook);
-    if (!bt) return;
-    const ct = chapterTranscript(bt, { id: chapterIndex - 1 });
+    const ct = chapterTranscript(bt, this.currentBook.chapters[chapterIndex - 1]);
     box.innerHTML = '';
     this.setSourceLink(ct);
+    this.setLastUpdated(ct);
     if (!ct) return;
 
     for (const chunk of chunksFor(ct, this.summaryMode)) {

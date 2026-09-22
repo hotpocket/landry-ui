@@ -55,7 +55,7 @@ var SHELL_FILES = [
 // One-time eviction of legacy single-file caches from prior architecture,
 // plus chapters recalled after a bad generation shipped (same URL, new bytes —
 // the immutable HTTP cache and this SW cache would otherwise never refetch).
-var LEGACY_AUDIO_KEYS = ['audio/book.m4b', 'audio/chapter_1073.m4a'];
+var LEGACY_AUDIO_KEYS = ['audio/book.m4b', 'audio/chapter_1073.m4a', 'audio/chapter_0021.m4a'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(

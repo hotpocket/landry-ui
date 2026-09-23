@@ -21,6 +21,9 @@ export interface LibraryBook {
   description?: string;
   duration: number;
   chapters: unknown[];
+  /** A short host-supplied label for the row (books.landry.bot: Public /
+   *  Private). The player attaches no meaning to it; absent renders nothing. */
+  badge?: string;
 }
 
 export interface TreeNode {
@@ -119,6 +122,7 @@ function BookItem({ book, idx, ...p }: { book: LibraryBook; idx: number } & Libr
         <div class="title">{book.title}</div>
         <div class="meta">
           {book.chapters.length} chapters &middot; {p.formatTime(book.duration)}
+          {book.badge ? <span class="book-badge">{book.badge}</span> : null}
         </div>
         {book.description ? <div class="book-desc">{book.description}</div> : null}
       </div>

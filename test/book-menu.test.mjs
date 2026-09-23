@@ -179,6 +179,35 @@ const openedBySpace = await page.waitForSelector('#player-view.active', { timeou
   .then(() => true, () => false);
 check(openedBySpace, 'I: Space on the focused row opens the book');
 
+// --- J: a host-supplied badge ---------------------------------------------
+// The host knows facts about a book the player does not (books.landry.bot:
+// public or private). A badge is a plain string on the book, rendered in the
+// row's meta line — absent unless the host sets one, so karagame and
+// brandonlandry.com render exactly as before.
+await page.goto(`${origin}/`);
+await page.evaluate(() => {
+  document.body.innerHTML = '<div id="app"></div>';
+  const ch = [{ id: 0, n: 1, title: 'Ch 1', filename: 'chapter_0001.m4a',
+                start: 0, end: 4, duration: 4, size: 1 }];
+  window.RepoStoryPlayer.init({
+    container: document.getElementById('app'), audioBaseUrl: 'audio/',
+    autoOpenLast: false, title: 'Lib',
+    books: [
+      { slug: 'pub', title: 'Pub', duration: 4, chapters: ch, badge: 'Public' },
+      { slug: 'priv', title: 'Priv', duration: 4, chapters: ch, badge: 'Private' },
+      { slug: 'none', title: 'None', duration: 4, chapters: ch },
+    ],
+  });
+});
+await page.waitForSelector('#book-list .book-item');
+const badges = await page.$$eval('#book-list .book-item', (rows) => rows.map((r) => {
+  const b = r.querySelector('.book-badge');
+  return b ? b.textContent.trim() : null;
+}));
+check(badges[0] === 'Public' && badges[1] === 'Private',
+      `J: each row shows the badge its host set (${JSON.stringify(badges)})`);
+check(badges[2] === null, 'J: a book with no badge renders no badge element');
+
 await browser.close();
 server.close();
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -57,7 +57,9 @@ var SHELL_FILES = [
 // the immutable HTTP cache and this SW cache would otherwise never refetch).
 var LEGACY_AUDIO_KEYS = ['audio/book.m4b', 'audio/chapter_1073.m4a', 'audio/chapter_0021.m4a',
   'audio/chapter_0032.m4a', 'audio/chapter_0040.m4a', 'audio/chapter_0043.m4a', 'audio/chapter_0053.m4a', 'audio/chapter_0096.m4a',
-  'audio/chapter_0140.m4a', 'audio/chapter_0188.m4a', 'audio/chapter_0300.m4a', 'audio/chapter_0369.m4a', 'audio/chapter_0501.m4a'];
+  'audio/chapter_0140.m4a', 'audio/chapter_0188.m4a', 'audio/chapter_0300.m4a', 'audio/chapter_0369.m4a', 'audio/chapter_0501.m4a',
+  'audio/chapter_0262.m4a', 'audio/chapter_0263.m4a', 'audio/chapter_0594.m4a', 'audio/chapter_0597.m4a', 'audio/chapter_0724.m4a',
+  'audio/chapter_0725.m4a', 'audio/chapter_1239.m4a', 'audio/chapter_1240.m4a', 'audio/chapter_1241.m4a'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(

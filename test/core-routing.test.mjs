@@ -21,6 +21,14 @@
 //   H. the hash for a book is '#/<slug>', and the library is the empty hash
 //   I. a malformed hash reads as the library rather than throwing — the boot
 //      path calls slugFromHash, so a URIError there takes the whole player down
+//   K. a chapter may be named after the book: '#/<slug>/<n>', 1-based, the same
+//      ordinal the list shows. Reading it must not corrupt the slug — the whole
+//      point of the segment is that '#/abc/3' still opens book 'abc'.
+//   L. the chapter segment is optional and hostile input degrades to "no
+//      chapter" rather than to a bad book: it runs on the boot path, and an
+//      exception there is a blank player.
+//   M. an encoded slug survives a chapter segment, because a host-supplied slug
+//      may contain the separator and the hash encodes it.
 //   J. collidingSlugs names books that resolve to the same hash. Truncation at
 //      MAX_SLUG can do it to two titles that differ only after character 60,
 //      and bookIdxFromSlug then sends both hashes to the first book — the second
@@ -33,6 +41,7 @@ import assert from 'node:assert';
 import { test } from 'node:test';
 import {
   slugify, bookSlug, bookIdxFromSlug, hashForBook, slugFromHash, collidingSlugs,
+  hashForChapter, routeFromHash,
 } from '../audiobook/player-src/src/core/routing.ts';
 
 const books = [
@@ -122,4 +131,46 @@ test('J. two titles that differ only past the cap are named as colliding', () =>
   assert.deepEqual(collidingSlugs([{ slug: 'a' }, { slug: 'a' }, { slug: 'a' }]), ['a']);
 
   assert.deepEqual(collidingSlugs([]), []);
+});
+
+test('K. a chapter is named after the book, 1-based', () => {
+  assert.equal(hashForChapter(books, 1, 3), '#/repo-story/3');
+  assert.equal(routeFromHash('#/repo-story/3').slug, 'repo-story');
+  assert.equal(routeFromHash('#/repo-story/3').chapter, 3);
+
+  // The regression the segment could cause: the book must still resolve.
+  assert.equal(bookIdxFromSlug(books, slugFromHash('#/repo-story/3')), 1);
+});
+
+test('K2. no chapter segment means no chapter, and the book still reads', () => {
+  assert.deepEqual(routeFromHash('#/repo-story'), { slug: 'repo-story', chapter: null });
+  assert.deepEqual(routeFromHash(''), { slug: null, chapter: null });
+  assert.equal(hashForChapter(books, 1, null), '#/repo-story');
+  assert.equal(hashForChapter(books, null, 3), '');
+});
+
+test('L. a chapter segment that is not a chapter reads as none, never as a throw', () => {
+  // Every one of these reaches start() on a cold load. A URIError or a NaN
+  // chapter here is a player that never mounts, or one that seeks nowhere.
+  for (const bad of ['#/repo-story/0', '#/repo-story/-1', '#/repo-story/abc',
+                     '#/repo-story/1.5', '#/repo-story/', '#/repo-story/3/4']) {
+    const r = routeFromHash(bad);
+    assert.equal(r.chapter, null, `${bad} produced a chapter`);
+    // And it degrades to the BOOK, not to the library: a junk tail must not
+    // cost the reader the book they asked for. Asserted because "chapter is
+    // null" alone is satisfied by a function that never finds anything.
+    assert.equal(r.slug, 'repo-story', `${bad} lost the book`);
+  }
+  // A malformed escape still degrades to the library rather than throwing.
+  assert.equal(routeFromHash('#/%/2').slug, null);
+  assert.equal(slugFromHash('#/%/2'), null);
+});
+
+test('M. a slug containing the separator survives a chapter segment', () => {
+  // Slugs from slugify never contain '/', but `slug` is host-supplied and the
+  // hash encodes it. Splitting the DECODED string would eat the slug.
+  const odd = [{ slug: 'a/b' }];
+  assert.equal(hashForChapter(odd, 0, 2), '#/a%2Fb/2');
+  assert.deepEqual(routeFromHash('#/a%2Fb/2'), { slug: 'a/b', chapter: 2 });
+  assert.equal(bookIdxFromSlug(odd, routeFromHash('#/a%2Fb/2').slug), 0);
 });

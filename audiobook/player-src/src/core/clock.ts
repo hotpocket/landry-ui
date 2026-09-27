@@ -16,6 +16,8 @@ export interface SummaryTrack {
   filename?: string;
   duration: number;
   size?: number;
+  /** See Chapter.content_hash — a summary track is a track like any other. */
+  content_hash?: string;
 }
 
 export interface Chapter {
@@ -28,6 +30,18 @@ export interface Chapter {
   duration?: number;
   size?: number;
   summary?: SummaryTrack;
+  /**
+   * A content address for the bytes this chapter's filename names.
+   *
+   * Optional because most hosts have none: karagame and brandonlandry.com
+   * publish manifests without it, and their URLs must stay exactly as they
+   * were. Where it IS present the player appends it as `?v=<hash>`, which is
+   * what makes a re-rendered chapter a different URL to CloudFront, to the
+   * service worker, to the browser cache and to an installed PWA — none of
+   * which have any other way to learn that audio published `immutable,
+   * max-age=31536000` at a stable key has been replaced.
+   */
+  content_hash?: string;
 }
 
 export interface Book {

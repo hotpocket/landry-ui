@@ -22,7 +22,7 @@ import {
 } from '../core/clock.ts';
 import { bookSlug, bookId, bookIdxFromSlug, hashForBook, slugFromHash, collidingSlugs } from '../core/routing.ts';
 import {
-  readProgress, writeProgress, readLastBookId, clearLastBook, migrateLegacyProgress,
+  readProgress, writeProgress, readLastBookId, migrateLegacyProgress,
   type KeyValueStore,
 } from '../core/progress.ts';
 import {
@@ -1424,7 +1424,8 @@ export class PlayerEngine {
     this.currentBook = null;
     this.currentBookIdx = null;
     this.hideOffer();
-    clearLastBook(this.store);
+    // The last book is deliberately left alone: the shelf is a visit, and the
+    // next launch should still open the book (resume-last-book.test.mjs).
     if (updateUrl) this.setUrl(null);
     this.refs.playerView.current?.classList.remove('active');
     const lib = this.refs.library.current;

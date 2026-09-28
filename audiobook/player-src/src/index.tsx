@@ -10,7 +10,8 @@ import { render, createRef } from 'preact';
 import { Shell, type ShellRefs } from './view/Shell.tsx';
 import { PlayerEngine } from './engine/player.ts';
 import { readDiag, type DiagEntry } from './core/diagnostics.ts';
-import type { RemoteProgressBackend } from './core/remote-progress.ts';
+import type { RemoteProgressBackend, RemoteRecord } from './core/remote-progress.ts';
+import { resumeBookId } from './core/progress.ts';
 import { safeStorage } from './core/storage.ts';
 
 export interface PlayerChrome {
@@ -132,6 +133,22 @@ function diagnostics(): DiagEntry[] {
   }
 }
 
+/**
+ * The book a launch should open, or null: the newest place this reader was, on
+ * this device or on any device in `remote` (the host's progress backend's
+ * `list()`). `knownIds`, when given, is the library now; anything else is
+ * skipped rather than opened as a 404.
+ *
+ * For hosts that route for themselves (autoOpenLast:false) and so decide WHEN
+ * to resume; the player owns WHICH, because it owns the stored records.
+ */
+function resumeTarget(remote: RemoteRecord[] = [], knownIds?: string[]): string | null {
+  // safeStorage is the whole guard: a getter that throws (iOS "Block All
+  // Cookies") reads as an empty store, and an empty store resumes nothing.
+  const known = knownIds ? new Set(knownIds) : null;
+  return resumeBookId(safeStorage(), remote, known ? (id) => known.has(id) : undefined);
+}
+
 // Named, not default: esbuild's globalName would otherwise expose the API as
 // RepoStoryPlayer.default.init and silently break every host.
-export { init, diagnostics };
+export { init, diagnostics, resumeTarget };

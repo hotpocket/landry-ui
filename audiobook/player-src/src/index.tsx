@@ -10,7 +10,8 @@ import { render, createRef } from 'preact';
 import { Shell, type ShellRefs } from './view/Shell.tsx';
 import { PlayerEngine } from './engine/player.ts';
 import { readDiag, type DiagEntry } from './core/diagnostics.ts';
-import type { RemoteProgressBackend } from './core/remote-progress.ts';
+import type { RemoteProgressBackend, RemoteRecord } from './core/remote-progress.ts';
+import { resumeBookId } from './core/progress.ts';
 import { safeStorage } from './core/storage.ts';
 
 export interface PlayerChrome {
@@ -24,6 +25,37 @@ export interface BookAction {
   id: string;
   label: string;
   onSelect: (book: unknown) => void;
+}
+
+/**
+ * What a host is told when a chapter action is chosen.
+ *
+ * `hash` is the player's own address for that chapter — the player owns the
+ * hash format, so a host that composed one itself would be a second copy of
+ * routing.ts free to drift from the first.
+ */
+export interface ChapterActionContext {
+  book: unknown;
+  chapter: unknown;
+  /** 0-based, the index into the book's chapters. */
+  chapterIndex: number;
+  /** 1-based, the ordinal the chapter list shows and the hash carries. */
+  chapterNumber: number;
+  /** '#/<slug>/<n>' — append to an origin and a shelf path for a full link. */
+  hash: string;
+}
+
+/**
+ * One entry in a host-supplied per-chapter menu.
+ *
+ * `label` may be a function because the same action can mean different things
+ * for different books — a link to a private book has to say so before it is
+ * chosen, not after. Still values and callbacks: no component crosses here.
+ */
+export interface ChapterAction {
+  id: string;
+  label: string | ((ctx: ChapterActionContext) => string);
+  onSelect: (ctx: ChapterActionContext) => void;
 }
 
 export interface PlayerOptions {
@@ -59,6 +91,13 @@ export interface PlayerOptions {
    * where a device class can be decided without fingerprinting anyone.
    */
   remoteProgressDevice?: string;
+  /**
+   * Absent means a chapter row keeps the browser's own context menu. Taking
+   * that away and offering nothing in its place is strictly worse than leaving
+   * it, so the player only claims the gesture when a host has something to put
+   * behind it. See docs/spec-chapter-list.md §6.
+   */
+  chapterActions?: ChapterAction[];
 }
 
 function makeRefs(): ShellRefs {
@@ -132,6 +171,22 @@ function diagnostics(): DiagEntry[] {
   }
 }
 
+/**
+ * The book a launch should open, or null: the newest place this reader was, on
+ * this device or on any device in `remote` (the host's progress backend's
+ * `list()`). `knownIds`, when given, is the library now; anything else is
+ * skipped rather than opened as a 404.
+ *
+ * For hosts that route for themselves (autoOpenLast:false) and so decide WHEN
+ * to resume; the player owns WHICH, because it owns the stored records.
+ */
+function resumeTarget(remote: RemoteRecord[] = [], knownIds?: string[]): string | null {
+  // safeStorage is the whole guard: a getter that throws (iOS "Block All
+  // Cookies") reads as an empty store, and an empty store resumes nothing.
+  const known = knownIds ? new Set(knownIds) : null;
+  return resumeBookId(safeStorage(), remote, known ? (id) => known.has(id) : undefined);
+}
+
 // Named, not default: esbuild's globalName would otherwise expose the API as
 // RepoStoryPlayer.default.init and silently break every host.
-export { init, diagnostics };
+export { init, diagnostics, resumeTarget };

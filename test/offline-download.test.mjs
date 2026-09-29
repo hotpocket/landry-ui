@@ -12,14 +12,24 @@
 // the button flashed "Preparing…" and went straight back to "Download ⇣", and
 // the only evidence anything failed was a console nobody can open.
 //
+// Rewritten 2026-08-26, not relaxed. The control shrank from a 128px pill with
+// a word in it to an icon the size of the menu button beside it — the action
+// itself moved into the chapter menu (landry-ui/docs/spec-chapter-list.md §6),
+// and what stays on the shelf is the state REPORT. So the assertions moved off
+// the visible words and onto the ACCESSIBLE NAME, which is what a reader with a
+// screen reader or a hover gets and the only place the states are still spelt
+// out. Stricter, not looser: the name has to name the state AND the control has
+// to stay small, which the old version never checked.
+//
 // Contract under test:
-//   A. a failing download leaves the button in a visible FAILED state, not the
-//      idle label it started with
+//   A. a failing download leaves the button in a visible FAILED state, named as
+//      such, not the idle name it started with
 //   B. the failed state is styled distinctly from an idle button — colour is
 //      how the list is scanned, and a failure that only differs in wording is
 //      invisible at a glance
 //   C. the failed button stays clickable, and clicking it retries: once the
-//      network recovers, the same button reaches "Downloaded ✓"
+//      network recovers, the same button reaches its downloaded state
+//   D. and it stays an icon — the size is the whole point of the change
 
 import { createRequire } from 'module';
 import { readFileSync, existsSync } from 'fs';
@@ -79,8 +89,12 @@ await page.waitForSelector('#book-list .book-item .dl-btn');
 const btnState = (idx) => page.evaluate((i) => {
   const btn = document.querySelectorAll('#book-list .book-item .dl-btn')[i];
   const cs = getComputedStyle(btn);
-  return { text: btn.textContent.trim(), cls: btn.className,
-           color: cs.color, border: cs.borderColor };
+  const r = btn.getBoundingClientRect();
+  // The NAME, not the glyph: the glyph is a tick or an arrow and says nothing
+  // on its own, and the name is what a hover and a screen reader read.
+  return { name: btn.getAttribute('aria-label') || btn.getAttribute('title') || '',
+           glyph: btn.textContent.trim(), cls: btn.className,
+           color: cs.color, border: cs.borderColor, w: Math.round(r.width) };
 }, idx);
 
 const idle = await btnState(0);
@@ -90,7 +104,7 @@ await page.click('#book-list .book-item .dl-btn');
 await page.waitForFunction(() => {
   const btn = document.querySelector('#book-list .book-item .dl-btn');
   // Settled: no longer idle-labelled and no longer in the downloading state.
-  return btn && !btn.classList.contains('downloading') && btn.textContent !== 'Download ⇣';
+  return btn && !btn.classList.contains('downloading') && btn.classList.contains('error');
 }, null, { timeout: 15000 }).catch(() => {});
 // Park the mouse first: page.click leaves the pointer on the button, and the
 // :hover rule paints an idle button blue — which made this check pass against
@@ -99,10 +113,12 @@ await page.mouse.move(0, 0);
 // …and let the 0.15s hover transition finish, or the sample reads mid-fade.
 await page.evaluate(() => new Promise((r) => setTimeout(r, 400)));
 const failed = await btnState(0);
-check(failed.text !== idle.text && !/^Download\b/.test(failed.text),
-      `A: failed download does not show the idle label (shows "${failed.text}")`);
-check(/fail|retry/i.test(failed.text),
-      `A: the label says it failed (shows "${failed.text}")`);
+check(failed.name !== idle.name,
+      `A: a failed download is not named as an idle one ("${failed.name}")`);
+check(/fail|retry/i.test(failed.name),
+      `A: and the name says it failed ("${failed.name}")`);
+check(failed.glyph !== idle.glyph,
+      `A: the glyph changes too, so the state reads without a hover ("${idle.glyph}" -> "${failed.glyph}")`);
 
 // --- B: styled distinctly --------------------------------------------------
 const idleNow = await btnState(1);  // second book's button, untouched
@@ -117,8 +133,14 @@ await page.waitForFunction(() => {
   return btn && btn.classList.contains('downloaded');
 }, null, { timeout: 30000 }).catch(() => {});
 const after = await btnState(0);
-check(/Downloaded/.test(after.text),
-      `C: retry from the failed button succeeds (shows "${after.text}")`);
+check(/downloaded/.test(after.cls) && /offline/i.test(after.name),
+      `C: retry from the failed button succeeds ("${after.name}", ${after.cls})`);
+
+// --- D: it is an icon, not a pill -----------------------------------------
+// The reason this change was made at all. 128px of "Download ⇣" beside every
+// title read as the primary thing to do with a book; opening it is.
+check(after.w <= 48 && idle.w <= 48,
+      `D: the control is an icon at every state (idle ${idle.w}px, settled ${after.w}px)`);
 
 await browser.close();
 server.close();

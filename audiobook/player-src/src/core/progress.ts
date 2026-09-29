@@ -129,16 +129,50 @@ export function writeProgress(store: KeyValueStore, bookId: string, s: ProgressS
   set(store, LAST_BOOK_ID, bookId);
 }
 
-/** The id of the book to resume, or null. Never an index. */
+/**
+ * The id of the book to resume, or null. Never an index.
+ *
+ * Only opening a book changes it. Going back to the library used to blank it,
+ * so one trip to the shelf meant the next launch resumed nothing — and the
+ * reader walked back to the book by hand every time. The shelf is somewhere
+ * you visit; the book is where you are.
+ */
 export function readLastBookId(store: KeyValueStore): string | null {
   const raw = get(store, LAST_BOOK_ID);
-  // The empty string is how `clearLastBook` says "the reader chose the shelf".
+  // Builds before 2026-09-28 wrote '' on the way to the shelf, and devices
+  // still hold it.
   return raw === null || raw === '' ? null : raw;
 }
 
-/** The reader went back to the library on purpose; nothing resumes. */
-export function clearLastBook(store: KeyValueStore): void {
-  set(store, LAST_BOOK_ID, '');
+/**
+ * The book a fresh launch should open: the newest place this reader was, on
+ * this device or any other.
+ *
+ * `remote` is what the host's progress backend listed; `known` says which ids
+ * are in the library now, so a book that has left it is skipped rather than
+ * opened as a 404 — and nothing stands in its place.
+ *
+ * The comparison is the one the in-book offer makes: a remote stamp that will
+ * not parse cannot be shown newer than anything and is ignored; a local record
+ * with no stamp predates stamps and loses to any remote one.
+ */
+export function resumeBookId(store: KeyValueStore,
+                             remote: readonly { bookId: string; updatedAt: string }[] = [],
+                             known: (id: string) => boolean = () => true): string | null {
+  let best: string | null = null;
+  let bestAt = -Infinity;
+  const local = readLastBookId(store);
+  if (local !== null && known(local)) {
+    best = local;
+    const t = Date.parse(readProgress(store, local).savedAt ?? '');
+    if (Number.isFinite(t)) bestAt = t;
+  }
+  for (const r of remote) {
+    // An unparseable stamp is NaN, and NaN is greater than nothing.
+    const t = Date.parse(r.updatedAt);
+    if (known(r.bookId) && t > bestAt) { best = r.bookId; bestAt = t; }
+  }
+  return best;
 }
 
 /**

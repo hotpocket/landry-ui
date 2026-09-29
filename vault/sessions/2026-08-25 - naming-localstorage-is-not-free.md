@@ -1,10 +1,10 @@
 ---
-tags: [session, landry-ui, books, ios, safari, storage, boot]
+tags: [session, landry-ui, books, ios, safari, storage, boot, instruments]
 type: session
 date: 2026-08-25
 projects: [landry-ui, books]
 concern: audiobooks
-summary: "books.landry.bot rendered nothing on an iPhone — static footer, empty <main>. Not a syntax level and not a feature: iOS Safari with 'Block All Cookies' throws SecurityError from the localStorage/sessionStorage/caches GETTER, so a line that merely NAMES the identifier is a throw. app.js named sessionStorage on its third executable line and the player named localStorage while constructing the engine. The class is every unguarded evaluation of a storage global on a boot path. Fixed with core/storage.ts in the player and storage(name) in the shell, plus the terminal .catch the shell's one promise chain never had — which converts any future member of the class from a silent blank page into a visible failure. Diagnosed from the photo: only the STATIC footer text was on screen, which is what pinned it to 'app.js never ran' rather than 'the API failed'."
+summary: "books.landry.bot rendered nothing on an iPhone — static footer, empty <main>. iOS Safari with 'Block All Cookies' throws SecurityError from the localStorage/sessionStorage/caches GETTER, so a line that merely NAMES the identifier is a throw; app.js named sessionStorage on its third executable line and the player named localStorage while constructing the engine. Fixed with core/storage.ts in the player and storage(name) in the shell, plus the terminal .catch the shell's one promise chain never had. DEPLOYED (shell bd42a34f, live_check 36/36) and confirmed working on the reporter’s phone. The durable output is not the fix: ~/bin/iphone now runs any URL in real WebKit under iPhone emulation with the privacy settings hostile, and ~/.claude/CLAUDE.md carries the standing rule that no web UI is finished until a browser that can REFUSE has seen it. Diagnosed from the photo alone: only the STATIC footer text was on screen, which pins it to 'app.js never ran'."
 status: complete
 ---
 
@@ -28,16 +28,12 @@ So the picture was not "the API failed" and not "the player broke". It was
 
 ## The instrument
 
-There is no WebKit in the gstack Playwright cache, and the global rule
-forbids `npx playwright install` as a reflex. Installed to an isolated
-`PLAYWRIGHT_BROWSERS_PATH` under the scratchpad, so the existing chromium
-cache could not be touched; the two missing system libs (`libwoff1`,
-`libmanette-0.2-0`, no sudo available) were `apt-get download`ed, extracted
-with `dpkg-deb -x`, and copied into the bundle's own `lib/` — `pw_run.sh`
-uses the bundle wrapper's env, so `LD_LIBRARY_PATH` alone does not reach it.
+No instrument on this machine could exhibit the defect, because every browser
+here says yes. Diagnosing it needed an engine that can refuse — real WebKit
+under iPhone emulation. That setup is now `~/bin/iphone` (see the last section);
+this is what it found.
 
-Then six scenarios against production under iPhone emulation. Exactly one
-reproduced the photograph:
+Six scenarios against production. Exactly one reproduced the photograph:
 
 | scenario | `#view` | body text |
 |---|---|---|
@@ -126,15 +122,58 @@ green suite measuring nothing.
   globals refused: the shelf renders, a book opens, the player mounts, zero
   page errors.
 
-## Not verified
+## Shipped
 
-**That this is what the requester's phone was doing.** The reproduction
-matches the photograph exactly and is the only one of six that does, but
-the device's actual setting was never read, and the AWS SSO window was
-expired so CloudFront/CloudWatch could not be asked what that iPhone
-requested at 5:36. If the phone still fails after the deploy, the next thing
-to look at is what changed on screen — the terminal catch means it should
-now say *something*, and that sentence is the next diagnosis.
+Pushed both repos, `sso landry` for credentials, `deploy-site.sh` — which
+planned exactly one step, `deploy-content.sh --shell-only`, because the API was
+byte-identical. Production runs shell `bd42a34f` (`app.js` 41e78a05e48d,
+`player.js` 42e25bb4c0ed). `live_check.mjs` 36 passed, 0 failed. `~/bin/iphone`
+against production with all three storage globals refused: output byte-identical
+to the normal pass, a book opens, no page errors. **The reporter confirmed it
+renders on the phone that could not load it.**
+
+Still not read: that phone's actual Safari setting. "Block All Cookies" is the
+theory that fits the evidence, not a reading of the device — the AWS SSO window
+was expired at diagnosis time, so CloudFront and CloudWatch were never asked what
+it requested. It stopped mattering for this defect, since every member of the
+class is fixed either way, but it is the reason the standing check below exists
+rather than a single assertion.
+
+## The durable output is the instrument, not the fix
+
+`~/bin/iphone <url>` — real WebKit (Safari's engine) under iPhone emulation, one
+pass normal and one with the browser's privacy settings hostile, reporting what
+differs and exiting non-zero on divergence. Passes: `no-storage` (the getters
+throw), `no-sw`, `offline-3p`. `--selector` says what "rendered" means; one
+screenshot per pass.
+
+Three things about it are load-bearing and would otherwise be rediscovered the
+hard way:
+
+- **It bootstraps WebKit into `~/.cache/iphone-webkit`, never the shared
+  `ms-playwright` cache.** `playwright install` deletes cached browsers *before*
+  failing on an unsupported OS, so installing WebKit into the shared cache risks
+  losing gstack's chromium. The global conduct file already forbids running that
+  command as a reflex; this is how to need it anyway without paying the price.
+- **It extracts `libwoff1` and `libmanette-0.2-0` from `.debs`** via `apt-get
+  download` + `dpkg-deb -x`, because there is no sudo on this machine. The `.so`s
+  must be copied into the bundle's own `minibrowser-*/lib/`: `pw_run.sh` runs the
+  bundle wrapper, which does not honour an inherited `LD_LIBRARY_PATH`.
+- **It is calibrated, and refuses to pretend otherwise.** Pointed at the pre-fix
+  shell it reports `content collapsed vs normal (32 vs 87 chars)` and `The
+  operation is insecure.` — 32 chars being the static footer, alone. The
+  `no-storage` pass fails outright if the `defineProperty` override did not take,
+  because a pass that measures nothing is the exact failure mode the script
+  exists to prevent.
+
+`~/.claude/CLAUDE.md` carries the standing rule, "Web UI is not finished until a
+browser that REFUSES has seen it". It sits *after* "A defect is a sample" rather
+than before it, because that section opens with a back-reference to the
+instruments section and an insertion between the two silently breaks it.
+
+It is not version-controlled. Like `filmstrip` and `sso` it lives only in
+`~/bin`, which does not survive a machine change — recorded as an open item in
+`vault/todos/landry-ui.md`, blocked on which repo should adopt it.
 
 Related: [[2026-08-24 - the-title-that-sized-the-player]] — the previous
 defect that no existing suite could exhibit, for the same structural reason:

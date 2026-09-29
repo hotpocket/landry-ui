@@ -16,6 +16,16 @@ export interface Chunk {
 
 export interface ChapterTranscript {
   index: number;
+  /**
+   * The source chapter number, when the builder published one.
+   *
+   * `index` is a POSITION in this list, and this list's membership rule is not
+   * the manifest's: a chapter is here when it has a WAV, an N.txt and a title,
+   * and it is in the manifest when it has an M4A and a title. A chapter
+   * rendered but not yet encoded is therefore in one and not the other, which
+   * is the ordinary state of a tree whose renderer encodes after transcribing.
+   * Optional because most published transcripts predate it.
+   */
   n?: number;
   /** Last publication of a changed chapter revision, in UTC. */
   last_updated?: string;
@@ -85,7 +95,35 @@ export function bookTranscript(
   return data.books.find((b) => b.slug === slug) ?? null;
 }
 
-/** Match durable chapter numbers first, with positional fallback for old data. */
+/**
+ * The transcript for one chapter.
+ *
+ * By the chapter's NUMBER where both sides publish one, and by position
+ * otherwise — the 0-based chapter id to 1-based transcript index conversion,
+ * kept in this one place.
+ *
+ * Position was the only rule until 2026-08-26, and it is wrong whenever the two
+ * lists have different lengths. They are built from different membership rules
+ * (see ChapterTranscript.n), so a chapter whose audio has rendered but not yet
+ * encoded is in the transcript and not in the manifest, and every chapter after
+ * it is shown the PREVIOUS chapter's text — silently, with no error anywhere,
+ * for as long as the gap lasts. The renderer for The Diary of a CEO encodes
+ * after it transcribes, so that gap is a normal state of that tree.
+ *
+ * A number that matches nothing returns null rather than falling back to the
+ * position: showing no text is a chapter that has not been transcribed yet,
+ * which is true, and showing the wrong chapter's text is the defect.
+ *
+ * "Matches nothing" is judged per entry, not per list. A book published
+ * incrementally mixes numbered transcripts with legacy unnumbered ones, so a
+ * numbered chapter with no numbered match may still take the UNNUMBERED entry at
+ * its position — never a numbered entry, which would be another chapter's text
+ * (and another chapter's last-updated date). A null `n` is no number at all.
+ *
+ * The fallback is not deprecation-in-waiting. karagame and brandonlandry.com
+ * publish transcripts built before `n` existed, and every one of them must keep
+ * pairing exactly as it always has.
+ */
 export function chapterTranscript(
   bt: BookTranscript | null | undefined,
   chapter: { id: number; n?: number } | null | undefined,

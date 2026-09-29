@@ -20,6 +20,61 @@ export function withMediaQuery(url: string, query: string | null | undefined): s
 }
 
 /**
+ * The message the page sends the service worker to say which renders a book is
+ * currently made of.
+ *
+ * The worker sees URLs and has no idea which ones are current, so versioned
+ * URLs alone stop a dead render being SERVED without ever removing the copy
+ * already in Cache Storage. The page knows, and tells it.
+ *
+ * sw.js is a classic script that cannot import this module, so the literal
+ * appears there too — `test/audio-versioning.test.mjs` reads both files and
+ * fails if they drift, which is the only way to have one source of truth
+ * across a module boundary the platform will not let us cross.
+ */
+export const AUDIO_MANIFEST_MESSAGE = 'audiobook-manifest';
+
+/**
+ * The parameter that content-addresses a media URL.
+ *
+ * `v`, deliberately the same name transcripts.json is already published under
+ * — one spelling, because sw.js keeps this parameter in its cache key while
+ * stripping the signature parameters around it, and a second name would be a
+ * second thing to keep in step with the worker.
+ */
+export const CONTENT_VERSION_PARAM = 'v';
+
+/**
+ * A chapter's URL, addressed by the bytes it names.
+ *
+ * THE CLASS this closes: every artifact derived from `source/N.txt` that is
+ * addressed by a name which does not move when the text does. Chapter audio is
+ * published to a stable S3 key with `public, max-age=31536000, immutable`, so a
+ * re-render replaces the bytes under a name every cache in the path has already
+ * been told it may keep for a year. Measured 2026-08-25: a reader in a fresh
+ * incognito profile was served a 46-hour-old chapter (`Age: 165651`,
+ * `X-Cache: Hit from cloudfront`) whose bytes had been replaced twenty hours
+ * before, and readers with the site installed as a PWA held copies older still.
+ *
+ * The manifest already carries a per-chapter `content_hash`, so the cure costs
+ * nothing at the origin: the object keeps its key, no re-upload happens, and
+ * the URL simply stops being the same URL when the audio stops being the same
+ * audio. The alternative — a hashed filename, `chapter_NNNN.<hash>.m4a` —
+ * would put the hash where the listing can see it, but re-uploads every
+ * chapter under a new key on every re-render and leaves the old objects
+ * orphaned in the bucket forever.
+ *
+ * An absent hash returns the URL untouched. Hosts whose manifests have none
+ * (karagame, brandonlandry.com) must not gain a parameter that changes when
+ * nothing changed — that busts every reader's cache on every deploy, which is
+ * the opposite failure.
+ */
+export function withContentVersion(url: string, hash: string | null | undefined): string {
+  if (!hash) return url;
+  return url + (url.includes('?') ? '&' : '?') + `${CONTENT_VERSION_PARAM}=${hash}`;
+}
+
+/**
  * The parameter that makes a retry a genuinely new request.
  *
  * Stripped from the service worker's cache key alongside the signature params,

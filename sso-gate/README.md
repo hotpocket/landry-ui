@@ -17,6 +17,7 @@ fixed dev user, who is also the Admin.
 |---|---|---|
 | `server/` | Express gate middleware, `/me` + `/allowlist` routes, file and DynamoDB stores | `luinst sso-gate/server <api>/src/vendor/sso-gate` (committed; see below) |
 | `cdk/` | `SsoGate` construct: configures the API function, gives it the allow-list table | `luinst sso-gate/cdk <infra>/lib/vendor/sso-gate` (committed) |
+| `flutter/` | `sso_gate` Dart package: `SsoAuth`, `SsoGateScreen`, `AllowlistDialog`, `GoogleSignInButton` | pubspec git dependency (below) — no vendoring |
 
 ## Server
 
@@ -65,6 +66,29 @@ Sets `GOOGLE_CLIENT_ID`, `ADMIN_EMAIL`, `ALLOWED_EMAILS`, `ALLOWED_DOMAIN` and
 table. A created table is string `pk` + `sk`, on-demand, point-in-time
 recovery, retained on stack delete. Peer libraries: `aws-cdk-lib`, `constructs`.
 
+## Flutter client
+
+```yaml
+# pubspec.yaml — pub resolves a git subdirectory; pubspec.lock pins the commit.
+dependencies:
+  sso_gate:
+    git: { url: https://github.com/hotpocket/landry-ui.git, path: sso-gate/flutter, ref: main }
+```
+
+```dart
+final auth = SsoAuth(clientId: const String.fromEnvironment('GOOGLE_CLIENT_ID'), storageKey: 'graph.idToken');
+await auth.init(onProfileChanged: state.setProfile);   // before the first API call
+// API client: send 'Authorization: Bearer ${auth.idToken}'; on 401 call auth.refreshIdToken() once and retry;
+// implement AllowlistApi (GET/POST/DELETE /allowlist) and read isAdmin from GET /me.
+if (auth.enabled && !authorized) return SsoGateScreen(title: 'Graph', tagline: '…', deniedMessage: 'Ask Brandon for an invite.', denied: accessDenied, checking: signedIn);
+if (isAdmin) AllowlistDialog.show(context, api);
+```
+
+Deciding `authorized` / `accessDenied` from the API's answers (200 / 403) stays
+in the site: it is the site's own state. `SafeLocalStorage` is the default
+token store; every browser-storage touch sits in a try (iOS Safari "Block All
+Cookies" throws from the getter), guarded by `test/storage_guard_test.dart`.
+
 ## Vendoring
 
 npm cannot install a subdirectory of a git repo, so TypeScript halves are
@@ -75,5 +99,7 @@ offline); re-run `luinst` to update, never edit it in place.
 ## Tests
 
 ```sh
-cd sso-gate && npm install && npm run typecheck && npm test
+cd sso-gate && npm install && npm run typecheck && npm test   # server + cdk
+cd sso-gate/flutter && flutter test && flutter analyze          # client (VM; the web-only
+                                                                # button and storage sit behind conditional imports)
 ```

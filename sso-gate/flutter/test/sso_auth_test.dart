@@ -47,6 +47,12 @@ class HostileStorage implements RawStorage {
   void removeItem(String key) => throw StateError('SecurityError');
 }
 
+/// Readable, but every write is refused (a full quota).
+class WriteRefusingStorage extends MemStorage {
+  @override
+  void setItem(String key, String value) => throw StateError('QuotaExceededError');
+}
+
 class FakeBrowser implements SsoBrowser {
   FakeBrowser(String url) : url = Uri.parse(url);
   @override
@@ -68,7 +74,8 @@ class Call {
 typedef Answer = Future<http.Response> Function();
 
 class Browser {
-  Browser(String url, {bool blocked = false, Browser? shared, String clientId = 'cid', bool defaults = false})
+  Browser(String url,
+      {bool blocked = false, Browser? shared, String clientId = 'cid', bool defaults = false, RawStorage? sessionRaw})
       : local = shared?.local ?? MemStorage(),
         session = shared?.session ?? MemStorage(),
         browser = FakeBrowser(url) {
@@ -78,7 +85,7 @@ class Browser {
       hostedDomain: defaults ? null : 'https://auth.landry.bot/',
       apiUrl: defaults ? null : 'https://api.auth.landry.bot',
       local: SafeLocalStorage(raw: blocked ? HostileStorage() : local),
-      session: SafeSessionStorage(raw: blocked ? HostileStorage() : session),
+      session: SafeSessionStorage(raw: blocked ? HostileStorage() : (sessionRaw ?? session)),
       browser: browser,
       client: MockClient(_handle),
       clock: () => clock,
@@ -456,13 +463,24 @@ void main() {
     final s = await b.auth.init();
     expect(s.status, SsoStatus.signedOut);
     expect(b.auth.storageBlocked, isTrue);
-    await b.auth.signIn(); // still navigates; the broker will say what it can
-    expect(b.browser.navigated, isNotNull);
+    // Leaving would strand the PKCE verifier in memory: the return could only fail.
+    await b.auth.signIn();
+    expect(b.browser.navigated, isNull);
+    expect(b.auth.state.value.status, SsoStatus.error);
+    expect(b.auth.state.value.message, matches(RegExp('cookies', caseSensitive: false)));
     final back = Browser('https://graph.landry.bot/?code=abc&state=s', blocked: true);
     final r = await back.auth.init();
     expect(r.status, SsoStatus.error);
     expect(r.message, matches(RegExp('cookies', caseSensitive: false)));
     expect(back.calls, isEmpty);
+  });
+
+  test('sessionStorage that reads but refuses writes: sign-in stays put and says why', () async {
+    final b = Browser('https://graph.landry.bot/', sessionRaw: WriteRefusingStorage());
+    await b.auth.init();
+    await b.auth.signIn();
+    expect(b.browser.navigated, isNull);
+    expect(b.auth.state.value.status, SsoStatus.error);
   });
 
   test('working storage is not reported blocked', () {

@@ -25,6 +25,8 @@
   'use strict';
 
   var SKEW = 60; // seconds: refresh this long before expiry
+  var COOKIES_SENTENCE =
+    'Sign-in needs cookies and site data. Allow them for this site (Safari: Settings > Safari > Block All Cookies off) and try again.';
 
   function b64url(bytes) {
     var s = '';
@@ -75,12 +77,17 @@
         if (k in mem) return mem[k];
         try { return real ? real.getItem(k) : null; } catch (e) { return null; }
       },
+      /** True if the value reached the browser's storage (survives a navigation). */
       set: function (k, v) {
         try {
           if (!real) throw new Error('no storage');
           real.setItem(k, v);
           delete mem[k];
-        } catch (e) { mem[k] = v; }
+          return true;
+        } catch (e) {
+          mem[k] = v;
+          return false;
+        }
       },
       remove: function (k) {
         try { if (real) real.removeItem(k); } catch (e) { /* ignore */ }
@@ -210,7 +217,7 @@
             return set({
               status: 'error',
               message: auth.storageBlocked
-                ? 'Sign-in needs cookies and site data. Allow them for this site (Safari: Settings > Safari > Block All Cookies off) and try again.'
+                ? COOKIES_SENTENCE
                 : 'Sign-in expired. Please try again.',
             });
           }
@@ -247,7 +254,13 @@
         var verifier = randomString(48);
         var state = randomString(16);
         var here = win.location.pathname + win.location.search + win.location.hash;
-        session.set(key + '.pkce', JSON.stringify({ verifier: verifier, state: state, next: next || here }));
+        // The verifier must survive the trip to Google and back; held only in
+        // memory it dies with this page and the return can only fail.
+        // (and init() refuses any return while either storage is blocked).
+        if (!session.set(key + '.pkce', JSON.stringify({ verifier: verifier, state: state, next: next || here })) || auth.storageBlocked) {
+          set({ status: 'error', message: COOKIES_SENTENCE });
+          return;
+        }
         var u = new URL(hosted + '/oauth2/authorize');
         u.searchParams.set('response_type', 'code');
         u.searchParams.set('client_id', clientId);

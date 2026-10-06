@@ -184,8 +184,11 @@ test('Block All Cookies: storage getters throw, init still answers with a senten
   const s = await b.auth.init();
   assert.equal(s.status, 'signedOut');
   assert.equal(b.auth.storageBlocked, true);
-  await b.auth.signIn(); // still navigates; the broker will say what it can
-  assert.ok(b.win.navigated);
+  // Leaving would strand the PKCE verifier in memory: the return could only fail.
+  await b.auth.signIn();
+  assert.equal(b.win.navigated, null);
+  assert.equal(b.auth.status.status, 'error');
+  assert.match(b.auth.status.message, /cookies/i);
   const back = browser('https://graph.landry.bot/?code=abc&state=s', { blocked: true });
   const r = await back.auth.init();
   assert.equal(r.status, 'error');
@@ -239,4 +242,23 @@ test('a storage that takes reads but refuses writes still remembers in memory', 
   const back = browser(`https://graph.landry.bot/?code=c&state=${state}`, { shared: { local: b.local, session: first.session } });
   assert.equal((await back.auth.init()).status, 'signedIn');
   assert.ok(await back.auth.accessToken());
+});
+
+test('sessionStorage that reads but refuses writes: sign-in stays put and says why', async () => {
+  const b = browser('https://graph.landry.bot/');
+  b.session.setItem = () => { throw new Error('QuotaExceededError'); };
+  await b.auth.init();
+  await b.auth.signIn();
+  assert.equal(b.win.navigated, null);
+  assert.equal(b.auth.status.status, 'error');
+});
+
+test('localStorage blocked but sessionStorage fine: sign-in stays put (the return would be refused)', async () => {
+  const b = browser('https://graph.landry.bot/');
+  b.local.getItem = () => { throw new Error('SecurityError'); };
+  const auth = LandryAuth.create({ site: 'graph', clientId: 'cid', window: b.win, fetch: async () => new Response('{}'), navigate: (u: string) => { b.win.navigated = u; } });
+  await auth.init();
+  await auth.signIn();
+  assert.equal(b.win.navigated, null);
+  assert.equal(auth.status.status, 'error');
 });

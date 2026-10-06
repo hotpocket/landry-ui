@@ -13,6 +13,12 @@ abstract interface class SsoStorage {
   void remove(String key);
 }
 
+/// A storage that can say whether a value really reached the browser (and so
+/// survives a navigation) or only lives in this page's memory.
+abstract interface class SsoStorageWrites implements SsoStorage {
+  bool persisted(String key);
+}
+
 /// A browser Storage as it really is: any call may throw. Tests stand in a
 /// hostile one; in the browser it is never constructed.
 @visibleForTesting
@@ -26,7 +32,7 @@ abstract interface class RawStorage {
 /// SecurityError from the localStorage/sessionStorage GETTER itself, so every
 /// touch sits inside a try. A probe at construction sets [blocked]; a refused
 /// or failed write keeps the value in memory instead. Never a crash.
-abstract class _SafeStorage implements SsoStorage {
+abstract class _SafeStorage implements SsoStorage, SsoStorageWrites {
   _SafeStorage(this._session, this._raw) {
     try {
       _raw == null ? impl.read(_session, '__probe__') : _raw.getItem('__probe__');
@@ -66,6 +72,9 @@ abstract class _SafeStorage implements SsoStorage {
       _memory[key] = value;
     }
   }
+
+  @override
+  bool persisted(String key) => !_blocked && !_memory.containsKey(key);
 
   @override
   void remove(String key) {

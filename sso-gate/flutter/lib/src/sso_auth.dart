@@ -87,6 +87,9 @@ class _TokenRefused implements Exception {
 ///
 /// No [clientId] = disabled: the site runs signed out with no network (local
 /// dev, where the API bypasses auth too).
+const _cookiesSentence = 'Sign-in needs cookies and site data. Allow them for this site '
+    '(Safari: Settings > Safari > Block All Cookies off) and try again.';
+
 class SsoAuth {
   SsoAuth({
     required this.site,
@@ -176,8 +179,7 @@ class SsoAuth {
       _browser.replaceUrl(_browser.url.path);
       return _set(SsoState(SsoStatus.error,
           message: storageBlocked
-              ? 'Sign-in needs cookies and site data. Allow them for this site '
-                  '(Safari: Settings > Safari > Block All Cookies off) and try again.'
+              ? _cookiesSentence
               : 'Sign-in expired. Please try again.'));
     }
     if (pending['state'] != state) {
@@ -210,6 +212,14 @@ class SsoAuth {
     final u = _browser.url;
     final here = '${u.path}${u.hasQuery ? '?${u.query}' : ''}${u.hasFragment ? '#${u.fragment}' : ''}';
     _session.set('$_key.pkce', jsonEncode({'verifier': verifier, 'state': state, 'next': next ?? here}));
+    // The verifier must survive the trip to Google and back; held only in
+    // memory it dies with this page and the return can only fail.
+    final s = _session;
+    // (and init() refuses any return while either storage is blocked).
+    if (storageBlocked || (s is SsoStorageWrites ? !s.persisted('$_key.pkce') : s.blocked)) {
+      _set(const SsoState(SsoStatus.error, message: _cookiesSentence));
+      return;
+    }
     _browser.navigate(Uri.parse('$hostedDomain/oauth2/authorize').replace(queryParameters: {
       'response_type': 'code',
       'client_id': clientId,

@@ -51,10 +51,8 @@ export class LandrySiteClient extends Construct {
   readonly client: cognito.UserPoolClient;
   readonly clientId: string;
   readonly userPoolId: string;
-  /** e.g. https://auth.landry.bot (resolved at deploy time). */
-  readonly hostedDomain: string;
-  /** e.g. https://api.auth.landry.bot (resolved at deploy time). */
-  readonly apiUrl: string;
+  private _hostedDomain?: string;
+  private _apiUrl?: string;
 
   constructor(scope: Construct, id: string, props: LandrySiteClientProps) {
     super(scope, id);
@@ -65,8 +63,6 @@ export class LandrySiteClient extends Construct {
     }
 
     this.userPoolId = props.userPoolId ?? ssm.StringParameter.valueForStringParameter(this, BROKER_PARAMS.userPoolId);
-    this.hostedDomain = ssm.StringParameter.valueForStringParameter(this, BROKER_PARAMS.hostedDomain);
-    this.apiUrl = ssm.StringParameter.valueForStringParameter(this, BROKER_PARAMS.apiUrl);
     const pool = cognito.UserPool.fromUserPoolId(this, 'Pool', this.userPoolId);
 
     this.client = new cognito.UserPoolClient(this, 'Client', {
@@ -95,5 +91,16 @@ export class LandrySiteClient extends Construct {
       props.api.addEnvironment('LANDRY_USER_POOL_ID', this.userPoolId);
       props.api.addEnvironment('LANDRY_CLIENT_ID', this.clientId);
     }
+  }
+
+  // Read from the broker's SSM exports only when asked for, so the broker's
+  // own stack (which writes them) can use this construct too.
+  /** e.g. https://auth.landry.bot (resolved at deploy time). */
+  get hostedDomain(): string {
+    return (this._hostedDomain ??= ssm.StringParameter.valueForStringParameter(this, BROKER_PARAMS.hostedDomain));
+  }
+  /** e.g. https://api.auth.landry.bot (resolved at deploy time). */
+  get apiUrl(): string {
+    return (this._apiUrl ??= ssm.StringParameter.valueForStringParameter(this, BROKER_PARAMS.apiUrl));
   }
 }

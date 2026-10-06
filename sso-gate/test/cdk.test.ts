@@ -84,3 +84,8 @@ test('localhost callbacks are allowed for local dev', () => {
     { CallbackURLs: ['https://graph.landry.bot/', 'http://localhost:8080/'] },
   );
 });
+
+test('given a pool id and never asked for the broker URLs, it reads no SSM (works inside the broker stack itself)', () => {
+  const { t } = stack({ userPoolId: 'us-east-1_Given' }, false);
+  assert.equal(Object.keys(t.toJSON().Parameters ?? {}).filter((k) => !k.startsWith('BootstrapVersion')).length, 0);
+});

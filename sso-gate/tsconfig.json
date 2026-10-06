@@ -1,0 +1,15 @@
+{
+  "//": "Mirrors the strictest consumer (resume server-ts) so vendored code compiles there unchanged.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["server/**/*.ts", "cdk/**/*.ts", "test/**/*.ts"]
+}

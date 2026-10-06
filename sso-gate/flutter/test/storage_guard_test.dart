@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 /// Safari with "Block All Cookies" throws SecurityError from the
 /// localStorage/sessionStorage GETTER — naming it is enough. The class: every
 /// evaluation of a storage global outside lib/src/storage_web.dart, whose
-/// only caller (SafeLocalStorage) wraps each call in try.
+/// only caller (SafeStorage in storage.dart) wraps each call in try.
 void main() {
   test('browser storage is only touched inside storage_web.dart', () {
     final offenders = <String>[];
@@ -22,13 +22,22 @@ void main() {
     expect(offenders, isEmpty);
   });
 
-  test('every storage_web.dart call is wrapped in try by SafeLocalStorage', () {
+  test('storage_web.dart is imported only by storage.dart', () {
+    final importers = [
+      for (final f in Directory('lib').listSync(recursive: true).whereType<File>())
+        if (f.path.endsWith('.dart') && f.readAsStringSync().contains("'storage_web.dart'")) f.path,
+    ];
+    expect(importers, [endsWith('storage.dart')]);
+  });
+
+  test('every storage_web.dart call is wrapped in try by SafeStorage', () {
     final src = File('lib/src/storage.dart').readAsStringSync();
-    for (final call in ['impl.read(', 'impl.write(', 'impl.delete(']) {
-      final at = src.indexOf(call);
-      expect(at, isNonNegative, reason: call);
-      final before = src.substring(0, at);
-      expect(before.lastIndexOf('try {'), greaterThan(before.lastIndexOf('}')), reason: '$call outside try');
+    final calls = RegExp(r'impl\.\w+\(').allMatches(src).toList();
+    expect(calls.map((m) => m.group(0)).toSet(), {'impl.read(', 'impl.write(', 'impl.delete('});
+    for (final m in calls) {
+      final before = src.substring(0, m.start);
+      expect(before.lastIndexOf('try {'), greaterThan(before.lastIndexOf('}')),
+          reason: '${m.group(0)} at offset ${m.start} outside try');
     }
   });
 }

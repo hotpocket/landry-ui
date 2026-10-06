@@ -1,32 +1,20 @@
 /**
- * sso-gate/server — Google sign-in + Admin-managed allow-list for an Express
- * API. See ../README.md for wiring. DynamoAllowListStore is in ./dynamo.js so
- * sites without DynamoDB never import the AWS SDK.
+ * sso-gate/server — verifies landry.bot broker (Cognito) access tokens for an
+ * Express API. See ../README.md for wiring.
  */
 
-export {
-  createSsoGate,
-  emailAllowed,
-  type IdTokenClaims,
-  type IdTokenVerifier,
-  type SsoGate,
-  type SsoGateOptions,
-  type SsoUser,
-} from './gate.js';
-export { FileAllowListStore, type AllowListStore } from './store.js';
+export { createSsoGate, type Role, type SsoGate, type SsoGateOptions, type SsoUser } from './gate.js';
 
-/** The standard env variables, normalised. One reader for every site. */
+/**
+ * The standard env variables, normalised. The site-client construct
+ * (../cdk) sets the LANDRY_* ones on the API function. AUTH=off is honoured
+ * only outside Lambda, so a deployed API can never run open.
+ */
 export function ssoConfigFromEnv(env: Record<string, string | undefined> = process.env) {
   return {
-    googleClientId: env['GOOGLE_CLIENT_ID'] ?? '',
-    adminEmail: (env['ADMIN_EMAIL'] ?? '').trim().toLowerCase(),
-    allowedEmails: new Set(
-      (env['ALLOWED_EMAILS'] ?? '')
-        .split(',')
-        .map((s) => s.trim().toLowerCase())
-        .filter(Boolean),
-    ),
-    allowedDomain: (env['ALLOWED_DOMAIN'] ?? '').trim().toLowerCase(),
-    devUserSub: env['DEV_USER_SUB'] ?? '',
+    site: env['LANDRY_SITE'] ?? '',
+    userPoolId: env['LANDRY_USER_POOL_ID'] ?? '',
+    clientId: env['LANDRY_CLIENT_ID'] ?? '',
+    devMode: env['AUTH'] === 'off' && !env['AWS_LAMBDA_FUNCTION_NAME'],
   };
 }

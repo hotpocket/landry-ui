@@ -1,105 +1,111 @@
 # sso-gate
 
-Google sign-in plus an Admin-managed allow-list, for any landry.bot site with an
-API. Extracted from resume.landry.bot, which is the reference consumer.
+Sign-in for any landry.bot site, through the landry.bot identity broker
+(`auth.landry.bot`: one Cognito pool with Google as its only identity provider;
+source in hotpocket/landry-auth). No per-site step in Google's console.
 
-- **Allow-list** — the Google account emails permitted to sign in. Lives in the
-  site's store (DynamoDB in prod), managed by the Admin from the UI; no redeploy
-  to invite someone. Env lists (`ALLOWED_EMAILS`, `ALLOWED_DOMAIN`) are a
-  bootstrap that is always allowed too. Everything empty = open to any Google
-  account.
-- **Admin** — the one account (`ADMIN_EMAIL`) that may manage the allow-list.
-
-No Google client id = local dev: verification is skipped and every request is a
-fixed dev user, who is also the Admin.
+- **Allow-list**: central, per site, in the broker. The broker's pre-token
+  check refuses a sign-in (and every token refresh) unless the email is on
+  that site's list, so a site never sees a token for someone who is not.
+  One item per (site, email); every change is conditional on that one member,
+  so two admins editing at once cannot undo each other.
+- **Roles**: `admin` (manages that site's list) or `user`. Global admins
+  (sirjava@gmail.com) are admin on every site and cannot be removed through a site.
+- **Site key**: the app client's name in the pool (`graph`, `resume`, `books`,
+  `family`). Tokens carry `landry_site` and `landry_role`.
+- Removing someone blocks their next sign-in and token refresh at once; an
+  access token issued before the removal stays valid until it expires (at most an hour).
 
 | Part | What | Consumed by |
 |---|---|---|
-| `server/` | Express gate middleware, `/me` + `/allowlist` routes, file and DynamoDB stores | `luinst sso-gate/server <api>/src/vendor/sso-gate` (committed; see below) |
-| `cdk/` | `SsoGate` construct: configures the API function, gives it the allow-list table | `luinst sso-gate/cdk <infra>/lib/vendor/sso-gate` (committed) |
-| `flutter/` | `sso_gate` Dart package: `SsoAuth`, `SsoGateScreen`, `AllowlistDialog`, `GoogleSignInButton` | pubspec git dependency (below) — no vendoring |
+| `cdk/` | `LandrySiteClient`: the site's app client in the broker pool; sets `LANDRY_*` on the API function | `luinst sso-gate/cdk <infra>/lib/vendor/sso-gate` (committed) |
+| `server/` | Express gate: verifies the Cognito **access** token for this site, `GET /me` | `luinst sso-gate/server <api>/src/vendor/sso-gate` (committed) |
+| `flutter/` | `sso_gate` Dart package: `SsoAuth` (PKCE redirect), `SsoGateScreen`, `MembersDialog` | pubspec git dependency |
+| `js/` | `landry-auth.js`: the same client for plain-JS pages, plus `mountMembersAdmin` | copy the file (luinst) and serve it |
+
+## Infrastructure (CDK)
+
+```ts
+import { LandrySiteClient } from './vendor/sso-gate';
+
+const auth = new LandrySiteClient(this, 'Auth', {
+  site: 'graph',
+  callbackUrls: ['https://graph.landry.bot/', 'http://localhost:8080/'],
+  api: apiFn,                       // gets LANDRY_SITE, LANDRY_USER_POOL_ID, LANDRY_CLIENT_ID
+  allowAdminTestAuth: true,         // optional: deploy smoke tests mint tokens with IAM creds
+});
+new cdk.CfnOutput(this, 'AuthClientId', { value: auth.clientId });   // the web build needs it
+```
+
+The pool id, hosted domain and API URL come from the broker's SSM exports
+(`/landry/auth/*`, landry account, us-east-1) at deploy time. Same-account
+sites only; a site in another account (books) gets its client from the
+landry-auth stack. Peer libraries: `aws-cdk-lib`, `constructs`.
 
 ## Server
 
 ```ts
 import { createSsoGate, ssoConfigFromEnv } from './vendor/sso-gate/index.js';
-import { DynamoAllowListStore } from './vendor/sso-gate/dynamo.js';
 
-const env = ssoConfigFromEnv();               // GOOGLE_CLIENT_ID, ADMIN_EMAIL, ALLOWED_EMAILS, ALLOWED_DOMAIN, DEV_USER_SUB
-const gate = createSsoGate({ ...env, store: new DynamoAllowListStore(docClient, process.env.DDB_TABLE!) });
-app.use('/api', healthRouter);                // public routes first
-app.use('/api', gate.requireAuth);            // 401 no/bad token, 403 not allowed; sets req.user {sub,email,name?}
-app.use('/api', gate.router);                 // GET /me, GET|POST /allowlist, DELETE /allowlist/:email
+const gate = createSsoGate(ssoConfigFromEnv());   // LANDRY_SITE, LANDRY_USER_POOL_ID, LANDRY_CLIENT_ID; AUTH=off (outside Lambda only)
+app.use('/api', healthRouter);                     // public routes first
+app.use('/api', gate.requireAuth);                 // sets req.user {sub, email, role, site, googleSub?}
+app.use('/api', gate.router);                      // GET /me -> {email, role, isAdmin, site}
+app.post('/api/x', gate.requireAdmin, ...);
 ```
 
-Peer libraries the site provides: `express`, `zod`, `google-auth-library`, and
-(for `dynamo.ts` only) `@aws-sdk/lib-dynamodb`. A site's own store may implement
-`AllowListStore` (three methods) instead of using the ones here.
-
-HTTP contract (the client half depends on it):
+Fails closed: no pool or client id means every request is 401. `googleSub` is
+the Google account id behind the sign-in, for sites whose data was keyed on
+the Google ID token's `sub` before the broker. Peer libraries: `express`,
+`aws-jwt-verify`.
 
 | Request | Answer |
 |---|---|
-| any, no `Authorization: Bearer` | `401 {error:"missing bearer token"}` |
-| token Google rejects | `401 {error:"token verification failed"}` — the client refreshes once and retries |
-| token whose email Google has not verified | `401 {error:"email not verified"}` |
-| signed in, not allowed | `403 {error:"account not authorized for this app"}` — the client shows "by invitation only" |
-| `GET /me` | `{email, name?, isAdmin}` |
-| `GET /allowlist` (Admin) | `{emails:[…]}` sorted, lowercase; non-Admin `403 {error:"admin only"}` |
-| `POST /allowlist {email}` (Admin) | `{emails}`; bad email `400` |
-| `DELETE /allowlist/:email` (Admin) | `{emails}`; absent `404` |
+| no `Authorization: Bearer` | `401 {error:"missing bearer token"}` |
+| bad signature / expired / ID token / another site's client | `401 {error:"token verification failed"}`: the client refreshes once and retries |
+| token stamped for another site, or not stamped | `403 {error:"account not authorized for this app"}` |
+| `requireAdmin`, not admin | `403 {error:"admin only"}` |
 
-## Infrastructure (CDK)
+## Broker API (managing a site's users)
 
-```ts
-import { SsoGate } from './vendor/sso-gate';
+`https://api.auth.landry.bot`, bearer = the site's access token. Authority
+comes from the table, not the token.
 
-new SsoGate(this, 'Sso', {
-  api: apiFn,                                 // the lambda.Function running the server half
-  googleClientId, adminEmail: 'sirjava@gmail.com',
-  table,                                      // optional: the site's pk/sk table; omit to create one (tableName?)
-});
+| Request | Answer |
+|---|---|
+| `GET /me` | `{email, global, sites:{site: role}}` |
+| `GET /sites/{site}/members` | `{members:[{email, role, global, addedBy, addedAt}]}` (site admin) |
+| `POST /sites/{site}/members {email, role?}` | `201`, `409` already a member |
+| `PATCH /sites/{site}/members/{email} {role}` | `200`, `404`, `409` yourself |
+| `DELETE /sites/{site}/members/{email}` | `204`, `404`, `409` yourself |
+
+## Browser flow (Flutter and JS alike)
+
+`signIn()` goes to `https://auth.landry.bot/oauth2/authorize` with
+`identity_provider=Google` (straight to Google, no Cognito page) and PKCE.
+Back on the site, `init()` exchanges the code, cleans the URL and returns to
+the page the user left. Refused by the allow-list = status `denied`. Tokens
+live in localStorage under `landry.<site>.auth`; the PKCE verifier in
+sessionStorage. Every storage touch is in a try: iOS Safari with "Block All
+Cookies" throws from the storage getter, and the page must still render a
+sentence (sign-in itself needs cookies there and cannot work).
+
+```js
+const auth = LandryAuth.create({ site: 'books', clientId });
+const s = await auth.init();         // checking -> signedIn | signedOut | denied | error
+if (s.status === 'signedIn') await auth.fetch('/api/library');
+if (s.user.isAdmin) LandryAuth.mountMembersAdmin(el, auth);
 ```
-
-Sets `GOOGLE_CLIENT_ID`, `ADMIN_EMAIL`, `ALLOWED_EMAILS`, `ALLOWED_DOMAIN` and
-`DDB_TABLE` (or `tableEnvVar`) on the function and grants it read/write on the
-table. A created table is string `pk` + `sk`, on-demand, point-in-time
-recovery, retained on stack delete. Peer libraries: `aws-cdk-lib`, `constructs`.
-
-## Flutter client
-
-```yaml
-# pubspec.yaml — pub resolves a git subdirectory; pubspec.lock pins the commit.
-dependencies:
-  sso_gate:
-    git: { url: https://github.com/hotpocket/landry-ui.git, path: sso-gate/flutter, ref: main }
-```
-
-```dart
-final auth = SsoAuth(clientId: const String.fromEnvironment('GOOGLE_CLIENT_ID'), storageKey: 'graph.idToken');
-await auth.init(onProfileChanged: state.setProfile);   // before the first API call
-// API client: send 'Authorization: Bearer ${auth.idToken}'; on 401 call auth.refreshIdToken() once and retry;
-// implement AllowlistApi (GET/POST/DELETE /allowlist) and read isAdmin from GET /me.
-if (auth.enabled && !authorized) return SsoGateScreen(title: 'Graph', tagline: '…', deniedMessage: 'Ask Brandon for an invite.', denied: accessDenied, checking: signedIn);
-if (isAdmin) AllowlistDialog.show(context, api);
-```
-
-Deciding `authorized` / `accessDenied` from the API's answers (200 / 403) stays
-in the site: it is the site's own state. `SafeLocalStorage` is the default
-token store; every browser-storage touch sits in a try (iOS Safari "Block All
-Cookies" throws from the getter), guarded by `test/storage_guard_test.dart`.
 
 ## Vendoring
 
-npm cannot install a subdirectory of a git repo, so TypeScript halves are
+npm cannot install a subdirectory of a git repo, so the TypeScript halves are
 vendored: `luinst` copies the directory and writes a `.luinst` stamp naming the
-landry-ui commit. Commit the copy (the API's tests and Lambda bundling need it
-offline); re-run `luinst` to update, never edit it in place.
+landry-ui commit. Commit the copy; re-run `luinst` to update, never edit it.
 
 ## Tests
 
 ```sh
-cd sso-gate && npm install && npm run typecheck && npm test   # server + cdk
-cd sso-gate/flutter && flutter test && flutter analyze          # client (VM; the web-only
-                                                                # button and storage sit behind conditional imports)
+cd sso-gate && npm install && npm run typecheck && npm test   # server + cdk + js
+cd sso-gate/flutter && flutter test && flutter analyze          # Flutter client
 ```

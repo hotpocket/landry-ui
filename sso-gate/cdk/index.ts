@@ -1,68 +1,99 @@
 /**
- * sso-gate/cdk — the infrastructure half of the gate: configures the API
- * function that runs sso-gate/server (createSsoGate + ssoConfigFromEnv) and
- * gives it the DynamoDB table its allow-list item lives in.
+ * sso-gate/cdk — a landry.bot site's sign-in, as one construct: the site's
+ * app client in the broker's Cognito pool (landry-auth, auth.landry.bot).
  *
- * A site with its own single table (pk/sk strings) passes it in; otherwise a
- * table of that shape is created. Either way the function gets read/write on
- * it and its name under DDB_TABLE (or tableEnvVar).
+ * The client's NAME is the site key. The broker's pre-token check reads it to
+ * decide whose tokens this client may issue, so a site cannot skip the
+ * allow-list: it never sees a token for someone not on it.
+ *
+ * Public client (no secret), authorization code + PKCE, Google as the only
+ * identity provider. If `api` is given, it gets the LANDRY_* variables that
+ * sso-gate/server's ssoConfigFromEnv() reads.
+ *
+ * Same-account sites only: the client is created in the pool's account. A
+ * site in another account gets its client from the landry-auth stack itself.
  */
 
 import * as cdk from 'aws-cdk-lib';
-import { aws_dynamodb as dynamodb, type aws_lambda as lambda } from 'aws-cdk-lib';
+import { aws_cognito as cognito, aws_ssm as ssm, type aws_lambda as lambda } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 
-export interface SsoGateProps {
+/** The broker's SSM exports (landry account, us-east-1). Mirrors landry-auth lib/exports.ts. */
+export const BROKER_PARAMS = {
+  userPoolId: '/landry/auth/user-pool-id',
+  hostedDomain: '/landry/auth/hosted-domain',
+  apiUrl: '/landry/auth/api-url',
+} as const;
+
+export interface LandrySiteClientProps {
+  /** Site key: lowercase letters, digits, dashes. The allow-list is per site key. */
+  readonly site: string;
+  /** Where the broker may send the browser back with a code. https, or http://localhost for dev. */
+  readonly callbackUrls: string[];
+  /** Where sign-out may land. Default: the callback URLs. */
+  readonly logoutUrls?: string[];
   /** The API function running sso-gate/server. */
-  readonly api: lambda.Function;
-  /** Google OAuth Web client id the API verifies ID tokens against. */
-  readonly googleClientId: string;
-  /** The one account that manages the allow-list from the UI. */
-  readonly adminEmail: string;
-  /** Comma-separated bootstrap emails, always allowed. Default none. */
-  readonly allowedEmails?: string;
-  /** Bootstrap Google Workspace / email domain. Default none. */
-  readonly allowedDomain?: string;
-  /** The site's table (string pk + sk). Omit to create one. */
-  readonly table?: dynamodb.ITable;
-  /** Physical name for a created table. Default: CloudFormation-generated. */
-  readonly tableName?: string;
-  /** Env var the table name is passed in. Default DDB_TABLE. */
-  readonly tableEnvVar?: string;
+  readonly api?: lambda.Function;
+  /** Default: the broker's SSM export. */
+  readonly userPoolId?: string;
+  /**
+   * Allow ADMIN_USER_PASSWORD_AUTH, so a deploy smoke test holding IAM
+   * credentials for the pool can mint real tokens for a test user. Not
+   * reachable from a browser. Default false.
+   */
+  readonly allowAdminTestAuth?: boolean;
 }
 
-export class SsoGate extends Construct {
-  /** Where the allow-list item (pk CONFIG / sk ALLOWLIST) lives. */
-  readonly table: dynamodb.ITable;
+const SITE_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+const URL_RE = /^(https:\/\/[^\s]+|http:\/\/localhost(:\d+)?(\/[^\s]*)?)$/;
 
-  constructor(scope: Construct, id: string, props: SsoGateProps) {
+export class LandrySiteClient extends Construct {
+  readonly client: cognito.UserPoolClient;
+  readonly clientId: string;
+  readonly userPoolId: string;
+  /** e.g. https://auth.landry.bot (resolved at deploy time). */
+  readonly hostedDomain: string;
+  /** e.g. https://api.auth.landry.bot (resolved at deploy time). */
+  readonly apiUrl: string;
+
+  constructor(scope: Construct, id: string, props: LandrySiteClientProps) {
     super(scope, id);
-    // The server half reads an empty client id as local dev: auth off, every
-    // request the Admin. Never let that synthesize for AWS.
-    if (!cdk.Token.isUnresolved(props.googleClientId) && props.googleClientId.trim() === '') {
-      throw new Error('SsoGate: googleClientId is empty — the API would run with auth disabled.');
-    }
-    if (props.table && props.tableName) {
-      throw new Error('SsoGate: tableName names a table it creates; omit it when passing table.');
+    if (!SITE_RE.test(props.site)) throw new Error(`LandrySiteClient: bad site key "${props.site}"`);
+    if (!props.callbackUrls.length) throw new Error('LandrySiteClient: no callback URL — nobody could sign in.');
+    for (const u of [...props.callbackUrls, ...(props.logoutUrls ?? [])]) {
+      if (!URL_RE.test(u)) throw new Error(`LandrySiteClient: "${u}" must be https (or http://localhost)`);
     }
 
-    this.table =
-      props.table ??
-      new dynamodb.Table(this, 'Table', {
-        ...(props.tableName ? { tableName: props.tableName } : {}),
-        partitionKey: { name: 'pk', type: dynamodb.AttributeType.STRING },
-        sortKey: { name: 'sk', type: dynamodb.AttributeType.STRING },
-        billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-        pointInTimeRecovery: true,
-        removalPolicy: cdk.RemovalPolicy.RETAIN, // the allow-list is user data
-      });
+    this.userPoolId = props.userPoolId ?? ssm.StringParameter.valueForStringParameter(this, BROKER_PARAMS.userPoolId);
+    this.hostedDomain = ssm.StringParameter.valueForStringParameter(this, BROKER_PARAMS.hostedDomain);
+    this.apiUrl = ssm.StringParameter.valueForStringParameter(this, BROKER_PARAMS.apiUrl);
+    const pool = cognito.UserPool.fromUserPoolId(this, 'Pool', this.userPoolId);
 
-    const { api } = props;
-    api.addEnvironment('GOOGLE_CLIENT_ID', props.googleClientId);
-    api.addEnvironment('ADMIN_EMAIL', props.adminEmail);
-    api.addEnvironment('ALLOWED_EMAILS', props.allowedEmails ?? '');
-    api.addEnvironment('ALLOWED_DOMAIN', props.allowedDomain ?? '');
-    api.addEnvironment(props.tableEnvVar ?? 'DDB_TABLE', this.table.tableName);
-    this.table.grantReadWriteData(api);
+    this.client = new cognito.UserPoolClient(this, 'Client', {
+      userPool: pool,
+      userPoolClientName: props.site,
+      generateSecret: false,
+      authFlows: props.allowAdminTestAuth ? { adminUserPassword: true } : {},
+      oAuth: {
+        flows: { authorizationCodeGrant: true },
+        scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],
+        callbackUrls: props.callbackUrls,
+        logoutUrls: props.logoutUrls ?? props.callbackUrls,
+      },
+      supportedIdentityProviders: [cognito.UserPoolClientIdentityProvider.GOOGLE],
+      preventUserExistenceErrors: true,
+      enableTokenRevocation: true,
+      // A removed member keeps a token at most this long; refresh re-checks the allow-list.
+      accessTokenValidity: cdk.Duration.minutes(60),
+      idTokenValidity: cdk.Duration.minutes(60),
+      refreshTokenValidity: cdk.Duration.days(30),
+    });
+    this.clientId = this.client.userPoolClientId;
+
+    if (props.api) {
+      props.api.addEnvironment('LANDRY_SITE', props.site);
+      props.api.addEnvironment('LANDRY_USER_POOL_ID', this.userPoolId);
+      props.api.addEnvironment('LANDRY_CLIENT_ID', this.clientId);
+    }
   }
 }

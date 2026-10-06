@@ -1,30 +1,38 @@
 /**
- * THE GATE. The browser signs in with Google and sends the Google ID token
- * (a JWT) as `Authorization: Bearer <idToken>` on every API call. We verify
- * its signature + audience against Google, check the email against the
- * allow-list, and expose the stable user id (`sub`) as req.user.
+ * THE GATE. The browser signs in through the landry.bot broker
+ * (auth.landry.bot, Cognito with Google) and sends the Cognito ACCESS token as
+ * `Authorization: Bearer <token>`. We verify signature, issuer, expiry,
+ * token_use and this site's client id, then read the broker's stamp:
+ * landry_site must be this site and landry_role is admin|user.
  *
- * Allow-list = bootstrap env lists (emails, one domain) OR the store-backed
- * list the Admin manages in the UI. Open to any Google account only when every
- * source is empty.
+ * Who may sign in at all is decided centrally, before a token exists: the
+ * broker's pre-token check refuses anyone not on this site's allow-list
+ * (managed through the broker API, not here). A token without the stamp is
+ * refused, so a misconfigured pool fails closed.
  *
- * No Google client id => local dev: verification is skipped and every request
- * is one fixed dev user, who is also the Admin.
+ * Fail closed: no pool id or client id => every request is 401, unless dev
+ * mode is explicit (AUTH=off outside Lambda), where every request is a fixed
+ * dev admin.
  */
 
-import { OAuth2Client } from 'google-auth-library';
+import { CognitoJwtVerifier } from 'aws-jwt-verify';
 import { Router, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
-import { z } from 'zod';
-import type { AllowListStore } from './store.js';
+
+export type Role = 'admin' | 'user';
 
 export interface SsoUser {
-  /** Google's stable, unique subject id — the data partition key. */
+  /** Cognito's subject id for this person (stable within the pool). */
   sub: string;
   email: string;
-  name?: string;
+  role: Role;
+  site: string;
+  /**
+   * The Google account id behind this sign-in. Sites that keyed data on the
+   * Google ID token's `sub` before the broker use this to find it.
+   */
+  googleSub?: string;
 }
 
-// Augment Express Request so handlers can read req.user with types.
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
@@ -34,165 +42,92 @@ declare global {
   }
 }
 
-/** The verified claims the gate reads from a Google ID token. */
-export interface IdTokenClaims {
-  sub?: string;
-  email?: string;
-  /** Google proved the account owns `email`; anything but true is refused. */
-  email_verified?: boolean;
-  /** Google Workspace hosted domain. */
-  hd?: string;
-  name?: string;
-}
-
-/** Verifies an ID token for `audience`; throws when Google says no. */
-export type IdTokenVerifier = (idToken: string, audience: string) => Promise<IdTokenClaims | undefined>;
-
 export interface SsoGateOptions {
-  /** Google OAuth Web client id. Empty => auth disabled (local dev). */
-  googleClientId: string;
-  /** The one account that manages the allow-list. Empty => nobody. */
-  adminEmail?: string;
-  /** Bootstrap emails, allowed regardless of the store. */
-  allowedEmails?: Iterable<string>;
-  /** Bootstrap Google Workspace / email domain. */
-  allowedDomain?: string;
-  store: AllowListStore;
-  /** Local dev: impersonate this Google sub instead of 'local-dev'. */
-  devUserSub?: string;
-  /** Test seam; defaults to google-auth-library. */
-  verifyIdToken?: IdTokenVerifier;
+  /** The site key: the app client's name in the pool. */
+  site: string;
+  userPoolId: string;
+  /** This site's app client id; tokens for other sites' clients are refused. */
+  clientId: string;
+  /** Local dev only: no verification, every request the dev admin. */
+  devMode?: boolean;
+  /** Test seam: a JWKS to trust instead of fetching the pool's. */
+  jwks?: { keys: object[] };
   /** Where rejection reasons go; defaults to console.warn (CloudWatch). */
   log?: (line: string) => void;
 }
 
 export interface SsoGate {
   readonly authDisabled: boolean;
-  /** Rejects requests without a valid, allow-listed token; sets req.user. */
+  /** 401 without a valid token for this site's client; 403 if the broker did not let them into this site. */
   readonly requireAuth: RequestHandler;
-  /** 403 unless req.user is the Admin; mount after requireAuth. */
+  /** 403 unless req.user is a site admin; mount after requireAuth. */
   readonly requireAdmin: RequestHandler;
-  /** GET /me, GET|POST /allowlist, DELETE /allowlist/:email. Mount after requireAuth. */
+  /** GET /me. Mount after requireAuth. */
   readonly router: Router;
-  isAdmin(user: SsoUser): boolean;
-  emailAllowed(email: string, hostedDomain?: string): Promise<boolean>;
 }
 
-/**
- * The allow decision on its own: env lists OR the store; open only when all
- * three are empty.
- */
-export async function emailAllowed(
-  email: string,
-  hostedDomain: string | undefined,
-  store: AllowListStore,
-  env: { emails: ReadonlySet<string>; domain: string },
-): Promise<boolean> {
-  if (env.emails.has(email.toLowerCase())) return true;
-  if (env.domain) {
-    const domain = (hostedDomain ?? email.split('@')[1] ?? '').toLowerCase();
-    if (domain === env.domain) return true;
-  }
-  const stored = await store.listAllowedEmails();
-  if (stored.includes(email.toLowerCase())) return true;
-  // Open mode: no source configured at all.
-  return env.emails.size === 0 && !env.domain && stored.length === 0;
-}
-
-function googleVerifier(clientId: string): IdTokenVerifier {
-  const client = new OAuth2Client(clientId);
-  return async (idToken, audience) => (await client.verifyIdToken({ idToken, audience })).getPayload();
-}
-
-/** Best-effort unverified claim peek for diagnostics only — never for auth. */
-function decodeUnverified(jwt: string): { aud?: string; exp?: number } | null {
-  try {
-    const payload = jwt.split('.')[1]!;
-    return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { aud?: string; exp?: number };
-  } catch {
-    return null;
-  }
-}
-
-const emailSchema = z.object({ email: z.string().email() });
-
-/** Express 4 drops async rejections; route them to the error handler. */
-const handle =
-  (fn: (req: Request, res: Response) => Promise<void>): RequestHandler =>
-  (req, res, next) => {
-    fn(req, res).catch(next);
-  };
+const GOOGLE_USERNAME = /^google_(.+)$/i;
 
 export function createSsoGate(opts: SsoGateOptions): SsoGate {
-  const clientId = opts.googleClientId;
-  const authDisabled = clientId === '';
-  const adminEmail = (opts.adminEmail ?? '').trim().toLowerCase();
-  const env = {
-    emails: new Set([...(opts.allowedEmails ?? [])].map((e) => e.trim().toLowerCase()).filter(Boolean)),
-    domain: (opts.allowedDomain ?? '').trim().toLowerCase(),
-  };
-  const store = opts.store;
   // eslint-disable-next-line no-console
   const log = opts.log ?? ((line: string) => console.warn(line));
-  const verify = authDisabled ? null : (opts.verifyIdToken ?? googleVerifier(clientId));
-  const devUser: SsoUser = { sub: opts.devUserSub || 'local-dev', email: 'dev@localhost', name: 'Local Dev' };
+  const configured = !!opts.userPoolId && !!opts.clientId && !!opts.site;
+  const devMode = !!opts.devMode && !configured;
+  const devUser: SsoUser = { sub: 'local-dev', email: 'dev@localhost', role: 'admin', site: opts.site || 'dev' };
 
-  const isAdmin = (user: SsoUser): boolean =>
-    authDisabled || (!!adminEmail && user.email.toLowerCase() === adminEmail);
+  let verifier: { verify(token: string): Promise<Record<string, unknown>> } | null = null;
+  if (configured) {
+    const v = CognitoJwtVerifier.create({ userPoolId: opts.userPoolId, tokenUse: 'access', clientId: opts.clientId });
+    if (opts.jwks) v.cacheJwks(opts.jwks as never);
+    verifier = { verify: (t) => v.verify(t) as Promise<Record<string, unknown>> };
+  }
 
   const requireAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    if (!verify) {
+    if (devMode) {
       req.user = devUser;
       next();
       return;
     }
-
-    // Every rejection logs a reason + non-PII token facts and returns a
-    // reason code — "why am I 401 in prod" must not require guesswork.
     const reject = (status: number, reason: string, detail?: string) => {
       log(`auth reject ${status} ${reason} ${req.method} ${req.path}${detail ? ` ${detail}` : ''}`);
       res.status(status).json({ error: reason });
     };
-
+    if (!verifier) {
+      reject(401, 'sign-in is not configured');
+      return;
+    }
     const match = /^Bearer (.+)$/.exec(req.header('authorization') ?? '');
     if (!match) {
       reject(401, 'missing bearer token');
       return;
     }
-
+    let claims: Record<string, unknown>;
     try {
-      const payload = await verify(match[1]!, clientId);
-      if (!payload?.sub || !payload.email) {
-        reject(401, 'invalid token payload');
-        return;
-      }
-      // An unverified address is a claim, not an identity: without this
-      // anyone could name an invited (or the Admin's) email on their account.
-      if (payload.email_verified !== true) {
-        reject(401, 'email not verified', `email=${payload.email}`);
-        return;
-      }
-      if (!(await emailAllowed(payload.email, payload.hd, store, env))) {
-        reject(403, 'account not authorized for this app', `email=${payload.email}`);
-        return;
-      }
-      req.user = { sub: payload.sub, email: payload.email, ...(payload.name ? { name: payload.name } : {}) };
-      next();
+      claims = await verifier.verify(match[1]!);
     } catch (e) {
-      // Surface WHAT failed (expired vs wrong audience vs bad signature) —
-      // the library's message says which without leaking the token.
-      const msg = e instanceof Error ? e.message.slice(0, 200) : 'unknown';
-      const claims = decodeUnverified(match[1]!);
-      reject(
-        401,
-        'token verification failed',
-        `lib="${msg}" aud=${claims?.aud === clientId ? 'ok' : 'MISMATCH'} exp=${claims?.exp ?? '?'} now=${Math.floor(Date.now() / 1000)}`,
-      );
+      // Say WHAT failed (expired, wrong client, bad signature) without the token.
+      reject(401, 'token verification failed', `lib="${e instanceof Error ? e.message.slice(0, 200) : 'unknown'}"`);
+      return;
     }
+    const email = typeof claims['email'] === 'string' ? claims['email'] : '';
+    const role = claims['landry_role'];
+    if (claims['landry_site'] !== opts.site || (role !== 'admin' && role !== 'user') || !email) {
+      reject(403, 'account not authorized for this app', `site=${String(claims['landry_site'])} role=${String(role)}`);
+      return;
+    }
+    const googleSub = GOOGLE_USERNAME.exec(String(claims['username'] ?? ''))?.[1];
+    req.user = {
+      sub: String(claims['sub']),
+      email,
+      role,
+      site: opts.site,
+      ...(googleSub ? { googleSub } : {}),
+    };
+    next();
   };
 
   const requireAdmin = (req: Request, res: Response, next: NextFunction): void => {
-    if (!req.user || !isAdmin(req.user)) {
+    if (req.user?.role !== 'admin') {
       res.status(403).json({ error: 'admin only' });
       return;
     }
@@ -200,52 +135,18 @@ export function createSsoGate(opts: SsoGateOptions): SsoGate {
   };
 
   const router = Router();
-
-  // Who am I (and may I manage the allow-list)? Every signed-in user.
   router.get('/me', (req, res) => {
-    const user = req.user!;
-    res.json({ email: user.email, ...(user.name ? { name: user.name } : {}), isAdmin: isAdmin(user) });
+    const u = req.user!;
+    res.json({ email: u.email, role: u.role, isAdmin: u.role === 'admin', site: u.site });
   });
 
-  router.use('/allowlist', requireAdmin);
-
-  router.get(
-    '/allowlist',
-    handle(async (_req, res) => {
-      res.json({ emails: await store.listAllowedEmails() });
-    }),
-  );
-
-  router.post(
-    '/allowlist',
-    handle(async (req, res) => {
-      const parsed = emailSchema.safeParse(req.body);
-      if (!parsed.success) {
-        res.status(400).json({ error: 'invalid email' });
-        return;
-      }
-      await store.addAllowedEmail(parsed.data.email);
-      res.json({ emails: await store.listAllowedEmails() });
-    }),
-  );
-
-  router.delete(
-    '/allowlist/:email',
-    handle(async (req, res) => {
-      if (!(await store.removeAllowedEmail(req.params['email']!))) {
-        res.status(404).json({ error: 'not in allow-list' });
-        return;
-      }
-      res.json({ emails: await store.listAllowedEmails() });
-    }),
-  );
-
   return {
-    authDisabled,
-    requireAuth,
+    authDisabled: devMode,
+    // Express 4 drops async rejections; route them to the error handler.
+    requireAuth: (req, res, next) => {
+      requireAuth(req, res, next).catch(next);
+    },
     requireAdmin,
     router,
-    isAdmin,
-    emailAllowed: (email, hostedDomain) => emailAllowed(email, hostedDomain, store, env),
   };
 }

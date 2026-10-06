@@ -1,9 +1,9 @@
 name: sso_gate
 description: >-
-  Google sign-in gate + Admin allow-list UI for landry.bot Flutter web sites.
-  Talks to sso-gate/server's HTTP contract (see ../README.md).
+  landry.bot sign-in (the Cognito broker at auth.landry.bot, Google behind it)
+  + the shared "manage users" UI for Flutter web sites. Mirrors ../js.
 publish_to: none
-version: 0.1.0
+version: 0.2.0
 
 environment:
   sdk: ^3.10.4
@@ -12,13 +12,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  google_sign_in: ^7.2.0
-  google_sign_in_web: ^1.0.0
+  crypto: ^3.0.6
+  http: ^1.2.0
   web: ^1.1.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
-  google_sign_in_platform_interface: ^3.1.0
-  plugin_platform_interface: ^2.1.8

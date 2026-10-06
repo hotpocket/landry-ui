@@ -4,7 +4,7 @@
   "description": "Dev/test harness for sso-gate/server and sso-gate/cdk. Consumers never install this package: they vendor server/ and cdk/ with luinst and supply the peer libraries themselves.",
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.cdk.json",
     "test": "node --import tsx --test --test-timeout=15000 test/*.test.ts"
   },
   "devDependencies": {

@@ -1,5 +1,5 @@
 {
-  "//": "Mirrors the strictest consumer (resume server-ts) so vendored code compiles there unchanged.",
+  "//": "server/ mirrors the strictest consumer (resume server-ts). cdk/ has its own config (tsconfig.cdk.json): aws-cdk-lib does not compile under exactOptionalPropertyTypes.",
   "compilerOptions": {
     "target": "ES2022",
     "module": "NodeNext",
@@ -11,5 +11,8 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["server/**/*.ts", "cdk/**/*.ts", "test/**/*.ts"]
+  "include": [
+    "server/**/*.ts",
+    "test/server.test.ts"
+  ]
 }

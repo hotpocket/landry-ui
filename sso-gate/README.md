@@ -16,6 +16,7 @@ fixed dev user, who is also the Admin.
 | Part | What | Consumed by |
 |---|---|---|
 | `server/` | Express gate middleware, `/me` + `/allowlist` routes, file and DynamoDB stores | `luinst sso-gate/server <api>/src/vendor/sso-gate` (committed; see below) |
+| `cdk/` | `SsoGate` construct: configures the API function, gives it the allow-list table | `luinst sso-gate/cdk <infra>/lib/vendor/sso-gate` (committed) |
 
 ## Server
 
@@ -40,11 +41,29 @@ HTTP contract (the client half depends on it):
 |---|---|
 | any, no `Authorization: Bearer` | `401 {error:"missing bearer token"}` |
 | token Google rejects | `401 {error:"token verification failed"}` — the client refreshes once and retries |
+| token whose email Google has not verified | `401 {error:"email not verified"}` |
 | signed in, not allowed | `403 {error:"account not authorized for this app"}` — the client shows "by invitation only" |
 | `GET /me` | `{email, name?, isAdmin}` |
 | `GET /allowlist` (Admin) | `{emails:[…]}` sorted, lowercase; non-Admin `403 {error:"admin only"}` |
 | `POST /allowlist {email}` (Admin) | `{emails}`; bad email `400` |
 | `DELETE /allowlist/:email` (Admin) | `{emails}`; absent `404` |
+
+## Infrastructure (CDK)
+
+```ts
+import { SsoGate } from './vendor/sso-gate';
+
+new SsoGate(this, 'Sso', {
+  api: apiFn,                                 // the lambda.Function running the server half
+  googleClientId, adminEmail: 'sirjava@gmail.com',
+  table,                                      // optional: the site's pk/sk table; omit to create one (tableName?)
+});
+```
+
+Sets `GOOGLE_CLIENT_ID`, `ADMIN_EMAIL`, `ALLOWED_EMAILS`, `ALLOWED_DOMAIN` and
+`DDB_TABLE` (or `tableEnvVar`) on the function and grants it read/write on the
+table. A created table is string `pk` + `sk`, on-demand, point-in-time
+recovery, retained on stack delete. Peer libraries: `aws-cdk-lib`, `constructs`.
 
 ## Vendoring
 

@@ -1,0 +1,22 @@
+{
+  "//": "Mirrors resume infra/tsconfig.json (CommonJS, ts-node) so the vendored construct compiles there unchanged.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "lib": [
+      "ES2022"
+    ],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": [
+      "node"
+    ],
+    "noEmit": true
+  },
+  "include": [
+    "cdk/**/*.ts",
+    "test/cdk.test.ts"
+  ]
+}

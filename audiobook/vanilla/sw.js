@@ -540,9 +540,22 @@ function audioResponse(e) {
 self.addEventListener('fetch', function (e) {
   var url = new URL(e.request.url);
 
+  // Only this site's own GETs are the worker's business. Everything else —
+  // another origin, or a POST — goes to the network untouched. The sign-in
+  // broker is both: its token endpoint is a cross-origin POST, and the shell
+  // branch below would store the answer (a token pair) and replay it whenever
+  // the network failed, handing the page an old token as if a refresh had
+  // worked. A cache keyed on the URL cannot describe a POST anyway.
+  if (url.origin !== self.location.origin || e.request.method !== 'GET') return;
+
   // The API is authoritative and cookie-bearing: never cached, never served
   // stale, never satisfied from here at all.
   if (url.pathname.indexOf('/api/') === 0) return;
+
+  // The return from sign-in (`/?code=…&state=…`, or `?error=…`). The code is
+  // single-use, so a cached copy can never be right, and every sign-in would
+  // leave one more entry behind.
+  if (url.searchParams.has('code') || url.searchParams.has('error')) return;
 
   if (url.pathname.match(/\.(m4a|mp3|ogg|m4b)$/)) {
     e.respondWith(audioResponse(e));

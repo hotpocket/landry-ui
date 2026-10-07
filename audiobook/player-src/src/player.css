@@ -185,6 +185,11 @@ body:not(.rs-embedded-page) { margin: 0; padding: 0; font-family: -apple-system,
 /* Reading mode drops the "Transcript" heading; the link is still the reader's
    way back to the original, so it stays. */
 .th-spacer { flex: 1; min-width: 0; }
+/* The controls wrap as a unit (see Shell.tsx): the header's flex-wrap breaks
+   before .th-controls, and inside it only between its groups, never within. */
+.th-controls { display: inline-flex; align-items: center; flex-wrap: wrap;
+  row-gap: 0.25rem; max-width: 100%; }
+.th-group { display: inline-flex; align-items: center; flex-wrap: nowrap; }
 .follow-btn, .reading-btn, .mini-play-btn, .mode-btn { white-space: nowrap; }
 .mode-toggle { display: inline-flex; gap: 0.25rem; margin-left: 0.75rem; }
 .mode-btn { background: none; border: 1px solid #333; color: #555; border-radius: 6px;

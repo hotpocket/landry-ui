@@ -1485,8 +1485,11 @@ export class PlayerEngine {
     // below the fold.
     const er = el.getBoundingClientRect();
     const br = box.getBoundingClientRect();
+    // Top of the pane, not a fraction of the way down: a third-down offset
+    // clipped any passage taller than the remaining two thirds, and made each
+    // new line land at a different height from the last.
     markProgrammaticScroll(box);
-    box.scrollTop += (er.top - br.top) - box.clientHeight / 3;
+    box.scrollTop += (er.top - br.top) - 4;
   }
 
   // ------------------------------------------------------------- the loop

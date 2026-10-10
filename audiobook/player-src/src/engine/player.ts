@@ -958,6 +958,11 @@ export class PlayerEngine {
       // took near the end of a chapter, and autoplaying the next one there
       // restarts a book they stopped.
       this.loadChapter(this.currentChapterIdx + 1, 0, !this.userPaused);
+    } else {
+      // The book is over. The 'pause' that came with 'ended' kept playIntent so
+      // a next chapter could autoplay; there is none, and the kept intent left
+      // the transport showing stop over a silent book.
+      this.playIntent = false;
     }
   };
 

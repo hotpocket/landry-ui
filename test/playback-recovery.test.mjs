@@ -468,6 +468,37 @@ const chapter2Requests = () => state.requests.filter((p) => p.endsWith('chapter_
   await page.context().close();
 }
 
+// --- I: the last chapter ending leaves the transport offering play ----------
+// Brandon, 2026-09-25 (Weakest Beast Tamer): "at the end of the last chapter
+// the play/pause button stays stuck on pause". 'ended' fires a 'pause' that
+// deliberately keeps playIntent (so the next chapter autoplays) -- but after
+// the LAST chapter there is no next one, and the kept intent painted the stop
+// glyph over a silent, finished book.
+{
+  state.deny2 = false;
+  state.hang2 = false;
+  const page = await freshPage();
+  await playFirstChapter(page);
+  await page.click('#btn-next');
+  await page.waitForFunction(() => {
+    const a = document.querySelector('audio');
+    return /chapter_0002/.test(a.currentSrc) && !a.paused && a.currentTime > 0.1;
+  }, null, { timeout: 10000 });
+  await page.evaluate(() => { const a = document.querySelector('audio'); a.currentTime = a.duration - 0.3; });
+  const ended = await page.waitForFunction(() => document.querySelector('audio').ended,
+    null, { timeout: 5000 }).then(() => true, () => false);
+  check(ended, 'I: the last chapter plays to its end');
+  await page.waitForFunction((g) => document.querySelector('#play-btn').textContent.trim() === g,
+                             PLAY_GLYPH, { timeout: 2000 }).catch(() => {});
+  const glyph = (await page.textContent('#play-btn')).trim();
+  check(glyph === PLAY_GLYPH, `I: a finished book shows play, not stop (shows "${glyph}")`);
+  await page.click('#play-btn');
+  const again = await page.waitForFunction(() => !document.querySelector('audio').paused,
+    null, { timeout: 5000 }).then(() => true, () => false);
+  check(again, 'I: one tap plays again');
+  await page.context().close();
+}
+
 await fetch(`${origin}/release`).catch(() => {});
 await browser.close();
 server.close();

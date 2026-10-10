@@ -349,6 +349,41 @@ if (!rbtn) {
   check(await page.evaluate(visibleExpr), 'N2: active chunk is not clipped');
 }
 
+// O: a passage taller than the pane is read through, not parked. Its top
+// sits at the pane's top when it starts, and the pane scrolls down through it
+// as it plays, so the words being spoken stay on screen (Brandon's phone
+// screenshot, 2026-10-09: a long wbt paragraph ran off the bottom).
+{
+  const tall = await page.addStyleTag({ content: '.transcript-chunk { min-height: 2000px; }' });
+  await page.evaluate(() => document.querySelector('audio').pause());
+  if (!(await page.evaluate(() => document.querySelector('#follow-btn').classList.contains('on'))))
+    await page.click('#follow-btn');
+  const probe = () => page.evaluate(() => {
+    const el = document.querySelector('.transcript-chunk.active');
+    const box = document.querySelector('#transcript-chunks');
+    const er = el.getBoundingClientRect(), br = box.getBoundingClientRect();
+    return { id: el.id, off: er.top - br.top, h: er.height, pane: box.clientHeight };
+  });
+  const settled = () => page.evaluate(() => new Promise((done) => {   // smooth scroll has stopped
+    const box = document.querySelector('#transcript-chunks');
+    let last = -1, still = 0;
+    const id = setInterval(() => {
+      still = box.scrollTop === last ? still + 1 : 0; last = box.scrollTop;
+      if (still >= 3) { clearInterval(id); done(); }
+    }, 100);
+  }));
+  const at = async (t) => { await setTime(t); await waitTicks(); await settled(); return probe(); };
+  const early = await at(14.001);             // chunk 20 spans 14.0-14.7
+  const late = await at(14.63);               // 90% of the way through it
+  const overflow = late.h - late.pane;
+  const spoken = late.off + 0.9 * late.h;     // where the voice is, in pane px
+  check(early.off >= 0 && early.off <= 16, `O1: a tall passage starts at the pane top (offset ${Math.round(early.off)})`);
+  check(early.id === late.id && late.off < -overflow * 0.6,
+    `O2: the pane scrolls down through it as it plays (offset ${Math.round(late.off)}, overflow ${Math.round(overflow)})`);
+  check(spoken >= 0 && spoken <= late.pane, `O3: the words being spoken are on screen (${Math.round(spoken)} of ${late.pane}px)`);
+  await tall.evaluate((n) => n.remove());
+}
+
 await browser.close();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

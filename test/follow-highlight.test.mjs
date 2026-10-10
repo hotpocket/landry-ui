@@ -21,6 +21,9 @@
 //   C. with Follow off, the mark still moves but the pane does not
 //   D. a new passage takes the mark; the previous one keeps none
 //   E. the passage's text is unchanged by the marking (search and copy read it)
+//   F. the mark is an underline, not a highlight (Brandon, 2026-10-10: "the
+//      highlight is a bit too abrasive"), and a passage that is one sentence
+//      shows none — the whole passage is already marked as the active one
 
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -45,7 +48,8 @@ const sentences = Array.from({ length: 12 }, (_, i) =>
 const long = sentences.join(' ');
 const chunks = [
   { index: 0, text: long, start: 0, end: 20 },
-  { index: 1, text: 'The second passage begins here. It is short.', start: 20, end: 30 },
+  { index: 1, text: 'The second passage begins here. It is short.', start: 20, end: 25 },
+  { index: 2, text: 'A passage of one sentence.', start: 25, end: 30 },
 ];
 const books = [{ slug: 'b', title: 'B', duration: 30, chapters: [{ n: 1, id: 0, title: 'Chapter 1', filename: 'chapter_0001.m4a', start: 0, end: 30, duration: 30 }] }];
 const transcripts = { books: [{ slug: 'b', chapters: [{ n: 1, index: 1, chunks }] }] };
@@ -87,6 +91,8 @@ const state = (page) => page.evaluate(() => {
     inActive: !!m?.closest('.transcript-chunk.active'),
     chunk: m?.closest('.transcript-chunk')?.id,
     inPane: !!r && r.top >= b.top - 1 && r.bottom <= b.bottom + 1,
+    underline: m ? getComputedStyle(m).textDecorationLine : null,
+    background: m ? getComputedStyle(m).backgroundColor : null,
     scrollTop: box.scrollTop,
     chunkTexts: [...box.querySelectorAll('.chunk-text')].map((e) => e.textContent),
   };
@@ -140,6 +146,14 @@ try {
   assert.equal(d.count, 1, 'D: one mark after crossing into the next passage');
   assert.equal(d.chunk, 'tc-1-1', 'D: the mark is in the new passage');
   assert.equal(d.text, 'The second passage begins here.', 'D: on its first sentence'); pass++;
+
+  // F
+  assert.ok(/underline/.test(d.underline), `F: the mark is underlined (${d.underline})`);
+  assert.ok(/rgba\(0, 0, 0, 0\)|transparent/.test(d.background), `F: and not highlighted (${d.background})`);
+  await seek(page, 27);
+  const one = await state(page);
+  assert.equal(one.chunk, 'tc-1-2', 'F: in the one-sentence passage');
+  assert.ok(!/underline/.test(one.underline ?? ''), `F: a one-sentence passage shows no underline (${one.underline})`); pass++;
 
   assert.deepEqual(errors, []);
   console.log(`${pass} passed, 0 failed`);

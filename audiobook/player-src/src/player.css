@@ -310,12 +310,15 @@ body:not(.rs-embedded-page) { margin: 0; padding: 0; font-family: -apple-system,
 .transcript-chunk { font-size: calc(0.85rem * var(--ts-scale, 1)); }
 .transcript-chunk .chunk-text { font-size: 1em; line-height: 1.5; color: #999; flex: 1; }
 .transcript-chunk.active .chunk-text { color: #e0e0e0; }
-/* The sentence being read (engine: updateSpeaking) — a soft lift on the
-   active passage, enough to find by eye, not a second highlight colour.
-   clone: a sentence wrapping lines keeps its rounded ends on every line. */
-.transcript-chunk .sent.speaking { background: rgba(255, 255, 255, 0.18); color: #fff;
-  border-radius: 3px; -webkit-box-decoration-break: clone; box-decoration-break: clone;
-  transition: background-color 0.25s; }
+/* The sentence being read (engine: updateSpeaking): underlined, not
+   highlighted — Brandon, 2026-10-10, found the highlight "a bit too abrasive";
+   an underline is enough to draw the eye. A passage of one sentence shows none:
+   the passage is already marked as the active one, and underlining all of it
+   says nothing more. */
+.transcript-chunk .sent.speaking { text-decoration: underline; text-decoration-thickness: 2px;
+  text-decoration-color: rgba(74, 158, 255, 0.85); text-underline-offset: 0.28em;
+  text-decoration-skip-ink: auto; }
+.transcript-chunk .sent.speaking:only-child { text-decoration: none; }
 .transcript-chunk .chunk-flag { flex-shrink: 0; opacity: 0; transition: opacity 0.15s; }
 .transcript-chunk:hover .chunk-flag,
 .transcript-chunk .chunk-flag.flagged { opacity: 1; }

@@ -160,6 +160,7 @@ export class PlayerEngine {
   private lastPlayState: boolean | null = null;
   private lastActiveChapterId: number | null = null;
   private lastActiveChunkId: number | null = null;
+  private activeChunk: Chunk | null = null;
   private userScrolledChapters = false;
 
   private chapterLis: HTMLLIElement[] = [];
@@ -1480,7 +1481,12 @@ export class PlayerEngine {
     }
   }
 
-  private scrollToActiveChunk(): void {
+  /**
+   * `minStep` > 0 is the in-passage call from the loop: it moves only when the
+   * target is at least that far away, so a long passage scrolls in steps a
+   * reader can follow instead of creeping every frame.
+   */
+  private scrollToActiveChunk(minStep = 0): void {
     const box = this.refs.transcriptChunks.current;
     if (!box) return;
     const el = box.querySelector('.transcript-chunk.active');
@@ -1490,8 +1496,25 @@ export class PlayerEngine {
     // below the fold.
     const er = el.getBoundingClientRect();
     const br = box.getBoundingClientRect();
+    // Top of the pane, not a fraction of the way down: a third-down offset
+    // clipped any passage taller than the remaining two thirds, and made each
+    // new line land at a different height from the last.
+    //
+    // A passage taller than the pane is read through: the pane slides down it
+    // in proportion to how much of it has been spoken. At fraction f the voice
+    // is f of the way down the passage and the pane has slid f of the
+    // overflow, so the spoken words sit f of the way down the pane -- always
+    // on screen, from the top at the start to the bottom at the end.
+    const pad = 4;
+    const overflow = er.height - (box.clientHeight - 2 * pad);
+    const c = this.activeChunk;
+    const t = this.audio.currentTime || 0;
+    const f = overflow > 0 && c && c.end > c.start
+      ? Math.min(1, Math.max(0, (t - c.start) / (c.end - c.start))) : 0;
+    const delta = (er.top - br.top) - pad + f * Math.max(0, overflow);
+    if (Math.abs(delta) < Math.max(1, minStep)) return;
     markProgrammaticScroll(box);
-    box.scrollTop += (er.top - br.top) - box.clientHeight / 3;
+    box.scrollTop += delta;
   }
 
   // ------------------------------------------------------------- the loop
@@ -1586,7 +1609,13 @@ export class PlayerEngine {
     const ct = chapterTranscript(bookTranscript(this.transcriptData, this.currentBook!), ch);
     const chunk = findChunkAt(chunksFor(ct, this.summaryMode), this.audio.currentTime || 0);
     if (!chunk) return;
-    if (chunk.index === this.lastActiveChunkId) return;
+    this.activeChunk = chunk;
+    if (chunk.index === this.lastActiveChunkId) {
+      // Same passage: only a tall one has anywhere to go. A quarter pane per
+      // step reads as turning a page, not as drift.
+      if (this.followTranscript) this.scrollToActiveChunk(box.clientHeight / 4);
+      return;
+    }
     if (this.lastActiveChunkId !== null) {
       box.querySelector(`#tc-${ch.id + 1}-${this.lastActiveChunkId}`)?.classList.remove('active');
     }

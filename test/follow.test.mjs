@@ -14,7 +14,7 @@
 //      active chunk
 import { createRequire } from 'module';
 import { execFileSync } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
@@ -23,8 +23,15 @@ const here = dirname(fileURLToPath(import.meta.url));
 const pwLib = process.env.PLAYWRIGHT_LIB || join(os.homedir(), 'git/gstack/node_modules/playwright');
 const { chromium } = createRequire(import.meta.url)(pwLib);
 
-const fixture = join(here, 'fixture/out/index.html');
-if (!existsSync(fixture)) execFileSync(join(here, 'fixture/gen.sh'), { stdio: 'inherit' });
+const vanillaFixture = join(here, 'fixture/out/index.html');
+if (!existsSync(vanillaFixture)) execFileSync(join(here, 'fixture/gen.sh'), { stdio: 'inherit' });
+// The shared fixture loads audiobook/vanilla, which no longer ships to
+// books.landry.bot. Follow is judged on the build the site serves
+// (PLAYER=vanilla to check the rollback copy instead).
+const fixture = join(here, 'fixture/out/index-player.html');
+const which = process.env.PLAYER === 'vanilla' ? 'vanilla' : 'player';
+writeFileSync(fixture, readFileSync(vanillaFixture, 'utf8')
+  .replaceAll('audiobook/vanilla/', `audiobook/${which}/`));
 
 let pass = 0, fail = 0;
 const ok = (m) => { pass++; console.log(`  ok: ${m}`); };
@@ -244,11 +251,14 @@ if (!rbtn) {
   }, { timeout: 4000 });
   await page.evaluate(() => { const a = document.querySelector('audio'); a.pause(); a.currentTime = 24.5; });
   await new Promise((r) => setTimeout(r, 1500));  // let that follow-scroll settle + fade
+  const from = await page.evaluate(() => document.querySelector('#transcript-chunks').scrollTop);
   await page.evaluate(() => { document.querySelector('audio').currentTime = 1.0; });  // far jump → smooth auto-scroll
   await new Promise((r) => setTimeout(r, 250));  // mid smooth-scroll
   const during = await sbColor();
   const moved = await page.evaluate(() => document.querySelector('#transcript-chunks').scrollTop);
-  check(moved < 1000 && !shown(during), `J: auto-scroll does not wake the scrollbar (scrollTop ${moved}, ${during})`);
+  // moved < from: the sample really is mid-scroll (it has started back up).
+  check(moved < from && moved > 0 && !shown(during),
+    `J: auto-scroll does not wake the scrollbar (scrollTop ${from} -> ${moved}, ${during})`);
 }
 
 // K: A−/A+ text-size stepper — 3 steps, clamped at the ends, persisted
@@ -314,6 +324,64 @@ if (!rbtn) {
   const scale = await page.evaluate(() => parseFloat(
     getComputedStyle(document.querySelector('#transcript-chunks')).getPropertyValue('--ts-scale')));
   check(Math.abs(scale - 1.953) < 0.01, `M: text size persists through reload (--ts-scale=${scale})`);
+}
+
+// N: following puts the line being read at the TOP of the pane, not a third
+// of the way down, so a long passage is not clipped at the bottom and every
+// line lands in the same place (a fixed-fraction offset reads as a wobble).
+{
+  await page.setViewportSize({ width: 900, height: 600 });
+  if (!(await page.evaluate(() => document.querySelector('#follow-btn').classList.contains('on'))))
+    await page.click('#follow-btn');
+  const offsets = [];
+  for (const t of [10.5, 14.5, 18.5]) {   // chunks 15, 19, 23 — all mid-list
+    await setTime(t);
+    await waitTicks();
+    await new Promise((r) => setTimeout(r, 700));  // outlast the smooth scroll
+    offsets.push(await page.evaluate(() => {
+      const el = document.querySelector('.transcript-chunk.active');
+      const box = document.querySelector('#transcript-chunks');
+      return el.getBoundingClientRect().top - box.getBoundingClientRect().top;
+    }));
+  }
+  check(offsets.every((o) => o >= 0 && o <= 16),
+    `N1: active chunk sits at the top of the pane (offsets ${offsets.map(Math.round)})`);
+  check(await page.evaluate(visibleExpr), 'N2: active chunk is not clipped');
+}
+
+// O: a passage taller than the pane is read through, not parked. Its top
+// sits at the pane's top when it starts, and the pane scrolls down through it
+// as it plays, so the words being spoken stay on screen (Brandon's phone
+// screenshot, 2026-10-09: a long wbt paragraph ran off the bottom).
+{
+  const tall = await page.addStyleTag({ content: '.transcript-chunk { min-height: 2000px; }' });
+  await page.evaluate(() => document.querySelector('audio').pause());
+  if (!(await page.evaluate(() => document.querySelector('#follow-btn').classList.contains('on'))))
+    await page.click('#follow-btn');
+  const probe = () => page.evaluate(() => {
+    const el = document.querySelector('.transcript-chunk.active');
+    const box = document.querySelector('#transcript-chunks');
+    const er = el.getBoundingClientRect(), br = box.getBoundingClientRect();
+    return { id: el.id, off: er.top - br.top, h: er.height, pane: box.clientHeight };
+  });
+  const settled = () => page.evaluate(() => new Promise((done) => {   // smooth scroll has stopped
+    const box = document.querySelector('#transcript-chunks');
+    let last = -1, still = 0;
+    const id = setInterval(() => {
+      still = box.scrollTop === last ? still + 1 : 0; last = box.scrollTop;
+      if (still >= 3) { clearInterval(id); done(); }
+    }, 100);
+  }));
+  const at = async (t) => { await setTime(t); await waitTicks(); await settled(); return probe(); };
+  const early = await at(14.001);             // chunk 20 spans 14.0-14.7
+  const late = await at(14.63);               // 90% of the way through it
+  const overflow = late.h - late.pane;
+  const spoken = late.off + 0.9 * late.h;     // where the voice is, in pane px
+  check(early.off >= 0 && early.off <= 16, `O1: a tall passage starts at the pane top (offset ${Math.round(early.off)})`);
+  check(early.id === late.id && late.off < -overflow * 0.6,
+    `O2: the pane scrolls down through it as it plays (offset ${Math.round(late.off)}, overflow ${Math.round(overflow)})`);
+  check(spoken >= 0 && spoken <= late.pane, `O3: the words being spoken are on screen (${Math.round(spoken)} of ${late.pane}px)`);
+  await tall.evaluate((n) => n.remove());
 }
 
 await browser.close();

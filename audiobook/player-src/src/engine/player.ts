@@ -32,7 +32,7 @@ import {
   type RemoteRecord,
 } from '../core/remote-progress.ts';
 import {
-  bookTranscript, chapterTranscript, chunksFor, findChunkAt, shortDate, updatedDate,
+  bookTranscript, chapterTranscript, chunksFor, findChunkAt, sentences, shortDate, updatedDate,
   type TranscriptData, type Chunk, type ChapterTranscript,
 } from '../core/transcript.ts';
 import { isSceneBreak, crossedSceneBreak } from '../core/scene.ts';
@@ -161,6 +161,10 @@ export class PlayerEngine {
   private lastActiveChapterId: number | null = null;
   private lastActiveChunkId: number | null = null;
   private activeChunk: Chunk | null = null;
+  private speakingEl: Element | null = null;
+  /** The sentence Follow last scrolled for: each is followed once, so a
+   *  smooth scroll still in flight is not mistaken for one out of view. */
+  private followedEl: Element | null = null;
   private userScrolledChapters = false;
 
   private chapterLis: HTMLLIElement[] = [];
@@ -1463,7 +1467,14 @@ export class PlayerEngine {
       div.id = `tc-${chapterIndex}-${chunk.index}`;
       const span = document.createElement('span');
       span.className = 'chunk-text';
-      span.textContent = chunk.text;
+      // One span per sentence, so the one being read can be marked
+      // (updateSpeaking). The pieces join back to the exact text.
+      for (const piece of sentences(chunk.text)) {
+        const sent = document.createElement('span');
+        sent.className = 'sent';
+        sent.textContent = piece;
+        span.appendChild(sent);
+      }
       div.appendChild(span);
       div.addEventListener('click', () => this.onChunkClick(chapterIndex - 1, chunk));
       box.appendChild(div);
@@ -1507,6 +1518,25 @@ export class PlayerEngine {
     // on screen, from the top at the start to the bottom at the end.
     const pad = 4;
     const overflow = er.height - (box.clientHeight - 2 * pad);
+    // A passage taller than the pane follows the sentence being read, which is
+    // marked (updateSpeaking): left alone while it is fully in view, brought to
+    // the top of the pane when it leaves -- a page turn, never a crawl. On
+    // arriving at the passage its top leads, unless that would hide the
+    // sentence (a seek into the middle of it).
+    const sp = overflow > 0 ? this.speakingEl : null;
+    if (sp && el.contains(sp)) {
+      const sr = sp.getBoundingClientRect();
+      const inView = (top: number, bottom: number) => top >= br.top + pad - 1 && bottom <= br.bottom - pad + 1;
+      if (minStep > 0 && (sp === this.followedEl || inView(sr.top, sr.bottom))) return;
+      this.followedEl = sp;
+      const toTop = (er.top - br.top) - pad;
+      const keepsIt = inView(sr.top - toTop, sr.bottom - toTop);
+      const d = minStep === 0 && keepsIt ? toTop : (sr.top - br.top) - pad;
+      if (Math.abs(d) < 1) return;
+      markProgrammaticScroll(box);
+      box.scrollTop += d;
+      return;
+    }
     const c = this.activeChunk;
     const t = this.audio.currentTime || 0;
     const f = overflow > 0 && c && c.end > c.start
@@ -1610,6 +1640,7 @@ export class PlayerEngine {
     const chunk = findChunkAt(chunksFor(ct, this.summaryMode), this.audio.currentTime || 0);
     if (!chunk) return;
     this.activeChunk = chunk;
+    this.updateSpeaking(box.querySelector(`#tc-${ch.id + 1}-${chunk.index}`), chunk);
     if (chunk.index === this.lastActiveChunkId) {
       // Same passage: only a tall one has anywhere to go. A quarter pane per
       // step reads as turning a page, not as drift.
@@ -1625,6 +1656,34 @@ export class PlayerEngine {
       if (this.followTranscript) this.scrollToActiveChunk();
     }
     this.lastActiveChunkId = chunk.index;
+  }
+
+  /**
+   * Mark the sentence being read. Transcripts time passages, not sentences, so
+   * it is placed by how far through the passage's time playback is, applied to
+   * its characters -- the narration voice reads at an even pace. Brandon,
+   * 2026-10-10: on a narrow screen he could not find the words being read; the
+   * mark draws the eye, and gives Follow something exact to keep in view.
+   */
+  private updateSpeaking(el: Element | null, chunk: Chunk): void {
+    const sents = el ? [...el.querySelectorAll('.sent')] : [];
+    let next: Element | null = null;
+    if (sents.length) {
+      const total = sents.reduce((n, s) => n + (s.textContent?.length ?? 0), 0);
+      const t = this.audio.currentTime || 0;
+      const f = chunk.end > chunk.start ? Math.min(1, Math.max(0, (t - chunk.start) / (chunk.end - chunk.start))) : 0;
+      const at = Math.min(total - 1, f * total);
+      let pos = 0;
+      for (const s of sents) {
+        pos += s.textContent?.length ?? 0;
+        if (at < pos) { next = s; break; }
+      }
+      next ??= sents[sents.length - 1];
+    }
+    if (next === this.speakingEl) return;
+    this.speakingEl?.classList.remove('speaking');
+    next?.classList.add('speaking');
+    this.speakingEl = next;
   }
 
   // --------------------------------------------------------------- offline

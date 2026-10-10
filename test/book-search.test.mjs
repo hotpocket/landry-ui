@@ -105,6 +105,7 @@ try {
   assert.deepEqual(r.map((x) => x.title), ['Chapter 1: Title 1', 'Chapter 3: Title 3'], 'A: only matching chapters, in order');
   assert.deepEqual(r.map((x) => x.count), ['1 match', '2 matches'], 'A: passage counts');
   assert.equal(r[0].marked, 'DRAGON', 'A: the term is marked in the snippet');
+  if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.SCREENSHOT_DIR, 'search-list.png') });
   pass++;
   assert.equal(audioRequests, before, 'G: typing fetches no audio'); pass++;
 
@@ -127,6 +128,7 @@ try {
   assert.deepEqual(w.marks, ['dragon', 'Dragon', 'dragon'], 'C: every occurrence in the chapter is marked');
   assert.equal(w.pos, '2 of 3', 'C: the bar says which match');
   assert.ok(await page.isHidden('#book-search-results'), 'C: the list closes on a pick');
+  if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.SCREENSHOT_DIR, 'search-picked.png') });
   pass++;
   // E
   assert.equal(w.paused, true, 'E: a paused player stays paused'); pass++;

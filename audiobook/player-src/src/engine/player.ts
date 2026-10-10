@@ -43,6 +43,7 @@ import {
 import { appendDiag, type DiagEntry } from '../core/diagnostics.ts';
 import { longPress, longPressDrag, resizePanels, markProgrammaticScroll, exceededSlop } from './gestures.ts';
 import { TranscriptLoader, wireSearch } from './search-ui.ts';
+import { BookSearch } from './book-search.ts';
 import { isRecent } from '../core/recency.ts';
 import { withMediaQuery, secondsUntilExpiry, withCacheBust, withContentVersion,
   AUDIO_MANIFEST_MESSAGE } from '../core/media-url.ts';
@@ -165,6 +166,7 @@ export class PlayerEngine {
   /** The sentence Follow last scrolled for: each is followed once, so a
    *  smooth scroll still in flight is not mistaken for one out of view. */
   private followedEl: Element | null = null;
+  private bookSearch: BookSearch | null = null;
   private userScrolledChapters = false;
 
   private chapterLis: HTMLLIElement[] = [];
@@ -539,6 +541,22 @@ export class PlayerEngine {
   private playChapterFrom(idx: number, timeInChapter: number): void {
     this.userPaused = false;
     this.loadChapter(idx, timeInChapter, true);
+  }
+
+  /**
+   * A search jump (book-search.ts): playback moves to the passage and keeps its
+   * play/pause state, and Follow re-arms so the passage is shown even if it is
+   * the one already active.
+   */
+  private jumpTo(idx: number, t: number): void {
+    if (!this.currentBook?.chapters[idx]) return;
+    this.setFollow(true, false);
+    this.lastActiveChunkId = null;
+    if (idx === this.currentChapterIdx) {
+      try { this.audio.currentTime = t; } catch { /* ignore */ }
+    } else {
+      this.loadChapter(idx, t, !this.audio.paused);
+    }
   }
 
   private seekToBookTime(bt: number, autoplay: boolean): void {
@@ -1479,6 +1497,7 @@ export class PlayerEngine {
       div.addEventListener('click', () => this.onChunkClick(chapterIndex - 1, chunk));
       box.appendChild(div);
     }
+    this.bookSearch?.applyMarks();
   }
 
   private onChunkClick(chapterIdx: number, chunk: Chunk): void {
@@ -1954,6 +1973,7 @@ export class PlayerEngine {
     // after the next line there is no way to say whose it was.
     if (this.currentBookIdx !== null && this.currentBookIdx !== idx) this.remotePut();
     this.hideOffer();
+    if (this.currentBookIdx !== idx) this.bookSearch?.reset();
     this.currentBook = this.books[idx];
     this.currentBookIdx = idx;
     this.lastActiveChapterId = null;
@@ -2133,6 +2153,26 @@ export class PlayerEngine {
     r.modeSummary.current?.addEventListener('click', () => this.setSummaryMode(true));
     r.resumeOfferGo.current?.addEventListener('click', () => this.acceptOffer());
     r.resumeOfferNo.current?.addEventListener('click', () => this.declineOffer());
+    if (r.bookSearchInput.current && r.bookSearchResults.current && r.bookSearchNav.current && r.bookSearchPos.current
+      && r.bookSearchPrev.current && r.bookSearchNext.current && r.bookSearchClose.current) {
+      this.bookSearch = new BookSearch({
+        book: () => this.currentBook,
+        transcript: () => (this.currentBook ? bookTranscript(this.transcriptData, this.currentBook) : null),
+        summary: () => this.summaryMode,
+        chapterIdxFor: (ti) => {
+          const bt = this.currentBook ? bookTranscript(this.transcriptData, this.currentBook) : null;
+          return this.currentBook?.chapters.findIndex((c) => chapterTranscript(bt, c)?.index === ti) ?? -1;
+        },
+        currentChapterIdx: () => this.currentChapterIdx,
+        currentTime: () => this.audio.currentTime || 0,
+        jump: (idx, t) => this.jumpTo(idx, t),
+        chunks: () => this.refs.transcriptChunks.current,
+      }, {
+        input: r.bookSearchInput.current, results: r.bookSearchResults.current, nav: r.bookSearchNav.current,
+        pos: r.bookSearchPos.current, prev: r.bookSearchPrev.current, next: r.bookSearchNext.current,
+        close: r.bookSearchClose.current,
+      });
+    }
 
     r.followBtn.current?.classList.toggle('on', this.followTranscript);
     this.applyTextSize();

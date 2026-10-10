@@ -172,3 +172,19 @@ export function findChunkAt(chunks: Chunk[] | null | undefined, t: number): Chun
   const c = chunks[lo];
   return t >= c.start && t < c.end ? c : null;
 }
+
+/**
+ * A passage cut into its sentences, losing nothing: the pieces join back to
+ * exactly `text`, spaces included, so marking one changes no character the
+ * reader (or search, or copy) sees. Each piece keeps the space after it.
+ *
+ * Transcripts time passages, not sentences, so this is what the reading mark
+ * steps through (engine: updateSpeaking). A sentence ends at . ! ? or an
+ * ellipsis, with any closing quote or bracket; a passage with none is one
+ * sentence. Abbreviations ("Mr.") split early — a mark a few words short,
+ * which costs less than a rule list that is never complete.
+ */
+export function sentences(text: string): string[] {
+  const out = text.match(/[^.!?\u2026]*[.!?\u2026]+["'\u201d\u2019)\]]*\s*|[^.!?\u2026]+$/g) ?? [];
+  return out.join('') === text ? out : [text];
+}

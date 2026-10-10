@@ -310,12 +310,15 @@ body:not(.rs-embedded-page) { margin: 0; padding: 0; font-family: -apple-system,
 .transcript-chunk { font-size: calc(0.85rem * var(--ts-scale, 1)); }
 .transcript-chunk .chunk-text { font-size: 1em; line-height: 1.5; color: #999; flex: 1; }
 .transcript-chunk.active .chunk-text { color: #e0e0e0; }
-/* The sentence being read (engine: updateSpeaking) — a soft lift on the
-   active passage, enough to find by eye, not a second highlight colour.
-   clone: a sentence wrapping lines keeps its rounded ends on every line. */
-.transcript-chunk .sent.speaking { background: rgba(255, 255, 255, 0.18); color: #fff;
-  border-radius: 3px; -webkit-box-decoration-break: clone; box-decoration-break: clone;
-  transition: background-color 0.25s; }
+/* The sentence being read (engine: updateSpeaking): underlined, not
+   highlighted — Brandon, 2026-10-10, found the highlight "a bit too abrasive";
+   an underline is enough to draw the eye. A passage of one sentence shows none:
+   the passage is already marked as the active one, and underlining all of it
+   says nothing more. */
+.transcript-chunk .sent.speaking { text-decoration: underline; text-decoration-thickness: 2px;
+  text-decoration-color: rgba(74, 158, 255, 0.85); text-underline-offset: 0.28em;
+  text-decoration-skip-ink: auto; }
+.transcript-chunk .sent.speaking:only-child { text-decoration: none; }
 .transcript-chunk .chunk-flag { flex-shrink: 0; opacity: 0; transition: opacity 0.15s; }
 .transcript-chunk:hover .chunk-flag,
 .transcript-chunk .chunk-flag.flagged { opacity: 1; }
@@ -688,3 +691,37 @@ body:not(.rs-embedded-page) { margin: 0; padding: 0; font-family: -apple-system,
   margin-top: 0.25rem;
   padding-top: 0.6rem;
 }
+
+/* Search inside the open book (docs/spec-book-search.md). One row: the box,
+   and once a match is picked the bar beside it ("3 of 17 ‹ › ✕"); the list of
+   matching chapters drops over the content while typing, so it costs no
+   permanent height on a phone. Reading mode drops it with the other chrome. */
+.book-search { position: relative; flex-shrink: 0; margin: 0 0 0.5rem; }
+.book-search-row { display: flex; align-items: center; gap: 0.35rem; }
+.book-search-input { flex: 1; min-width: 0; box-sizing: border-box; padding: 0.4rem 0.65rem;
+  font: inherit; font-size: 0.85rem; color: #ddd; background: #1a1a1a;
+  border: 1px solid #333; border-radius: 4px; }
+.book-search-input:focus { outline: none; border-color: #4a9eff; }
+.book-search-nav { display: inline-flex; align-items: center; gap: 0.25rem; flex-shrink: 0; }
+.book-search-nav[hidden] { display: none; }
+.book-search-pos { font-size: 0.75rem; color: #999; white-space: nowrap;
+  font-variant-numeric: tabular-nums; margin: 0 0.15rem; }
+.bs-btn { background: none; border: 1px solid #333; color: #bbb; border-radius: 6px;
+  min-width: 2rem; height: 2rem; font-size: 0.95rem; line-height: 1; cursor: pointer; }
+.bs-btn:hover { color: #4a9eff; border-color: #4a9eff; }
+.book-search-results { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30;
+  max-height: 60vh; overflow-y: auto; background: #141414; border: 1px solid #2a2a2a;
+  border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
+.book-search-results[hidden] { display: none; }
+.bs-row { display: grid; grid-template-columns: 1fr auto; column-gap: 0.6rem; row-gap: 0.15rem;
+  width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid #1f1f1f;
+  padding: 0.55rem 0.75rem; color: #bbb; font: inherit; cursor: pointer; }
+.bs-row:hover, .bs-row:focus-visible { background: #1b1b1b; outline: none; }
+.bs-row-title { color: #e0e0e0; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bs-row-count { color: #4a9eff; font-size: 0.72rem; white-space: nowrap; align-self: center; }
+.bs-row-snippet { grid-column: 1 / -1; color: #888; font-size: 0.78rem; line-height: 1.4; }
+.bs-row-snippet mark, .bs-hit { background: rgba(250, 204, 21, 0.28); color: inherit; border-radius: 2px; }
+.bs-empty { color: #666; font-size: 0.8rem; padding: 0.6rem 0.75rem; }
+/* The match being visited, stronger than the rest of the chapter's hits. */
+.bs-hit.bs-current { background: rgba(250, 204, 21, 0.6); color: #111; }
+.player-view.reading-mode .book-search { display: none; }

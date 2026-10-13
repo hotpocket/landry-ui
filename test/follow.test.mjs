@@ -350,9 +350,12 @@ if (!rbtn) {
 }
 
 // O: a passage taller than the pane is read through, not parked. Its top
-// sits at the pane's top when it starts, and the pane scrolls down through it
-// as it plays, so the words being spoken stay on screen (Brandon's phone
-// screenshot, 2026-10-09: a long wbt paragraph ran off the bottom).
+// sits at the pane's top when it starts, and the words being spoken stay on
+// screen (Brandon's phone screenshot, 2026-10-09: a long wbt paragraph ran off
+// the bottom). Since 2026-10-10 the words being spoken are the marked sentence
+// (follow-highlight covers real multi-sentence passages); this passage is one
+// short sentence padded tall, so the sentence must stay put at the top rather
+// than the pane sliding off it by an estimate.
 {
   const tall = await page.addStyleTag({ content: '.transcript-chunk { min-height: 2000px; }' });
   await page.evaluate(() => document.querySelector('audio').pause());
@@ -362,7 +365,9 @@ if (!rbtn) {
     const el = document.querySelector('.transcript-chunk.active');
     const box = document.querySelector('#transcript-chunks');
     const er = el.getBoundingClientRect(), br = box.getBoundingClientRect();
-    return { id: el.id, off: er.top - br.top, h: er.height, pane: box.clientHeight };
+    const sp = el.querySelector('.speaking')?.getBoundingClientRect();
+    return { id: el.id, off: er.top - br.top, h: er.height, pane: box.clientHeight,
+      spTop: sp ? sp.top - br.top : null, spBottom: sp ? sp.bottom - br.top : null };
   });
   const settled = () => page.evaluate(() => new Promise((done) => {   // smooth scroll has stopped
     const box = document.querySelector('#transcript-chunks');
@@ -375,12 +380,11 @@ if (!rbtn) {
   const at = async (t) => { await setTime(t); await waitTicks(); await settled(); return probe(); };
   const early = await at(14.001);             // chunk 20 spans 14.0-14.7
   const late = await at(14.63);               // 90% of the way through it
-  const overflow = late.h - late.pane;
-  const spoken = late.off + 0.9 * late.h;     // where the voice is, in pane px
   check(early.off >= 0 && early.off <= 16, `O1: a tall passage starts at the pane top (offset ${Math.round(early.off)})`);
-  check(early.id === late.id && late.off < -overflow * 0.6,
-    `O2: the pane scrolls down through it as it plays (offset ${Math.round(late.off)}, overflow ${Math.round(overflow)})`);
-  check(spoken >= 0 && spoken <= late.pane, `O3: the words being spoken are on screen (${Math.round(spoken)} of ${late.pane}px)`);
+  check(early.id === late.id && late.spTop !== null,
+    `O2: late in the passage its sentence is still marked (${late.spTop === null ? 'no mark' : 'marked'})`);
+  check(late.spTop !== null && late.spTop >= 0 && late.spBottom <= late.pane,
+    `O3: the words being spoken are on screen (${late.spTop === null ? 'no mark' : Math.round(late.spTop) + '-' + Math.round(late.spBottom)} of ${late.pane}px)`);
   await tall.evaluate((n) => n.remove());
 }
 

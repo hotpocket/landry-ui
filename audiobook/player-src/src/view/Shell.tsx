@@ -68,6 +68,13 @@ export interface ShellRefs {
   nextBtn: RefObject<HTMLButtonElement>;
   fwd30: RefObject<HTMLButtonElement>;
   speedBtn: RefObject<HTMLButtonElement>;
+  bookSearchInput: RefObject<HTMLInputElement>;
+  bookSearchResults: RefObject<HTMLDivElement>;
+  bookSearchNav: RefObject<HTMLSpanElement>;
+  bookSearchPos: RefObject<HTMLSpanElement>;
+  bookSearchPrev: RefObject<HTMLButtonElement>;
+  bookSearchNext: RefObject<HTMLButtonElement>;
+  bookSearchClose: RefObject<HTMLButtonElement>;
 }
 
 export function Shell({ title, hideBackButton, hideNowPlaying, refs }: ShellProps) {
@@ -137,6 +144,35 @@ export function Shell({ title, hideBackButton, hideNowPlaying, refs }: ShellProp
         >
           <div class="book-title" id="book-title" ref={refs.bookTitle} />
           <div class="chapter-title" id="chapter-title" ref={refs.chapterTitle} />
+        </div>
+        {/* Search inside this book (docs/spec-book-search.md): the box, the
+            match bar beside it once a match is picked, and the list of
+            chapters that match, dropped over the content while typing. */}
+        <div class="book-search" id="book-search">
+          <div class="book-search-row">
+            <input
+              class="book-search-input"
+              id="book-search-input"
+              type="search"
+              placeholder="Search this book…"
+              aria-label="Search this book"
+              autocomplete="off"
+              ref={refs.bookSearchInput}
+            />
+            <span class="book-search-nav" id="book-search-nav" ref={refs.bookSearchNav} hidden>
+              <span class="book-search-pos" id="book-search-pos" ref={refs.bookSearchPos} />
+              <button class="bs-btn" id="book-search-prev" title="Previous match" aria-label="Previous match" ref={refs.bookSearchPrev}>
+                &#8249;
+              </button>
+              <button class="bs-btn" id="book-search-next" title="Next match" aria-label="Next match" ref={refs.bookSearchNext}>
+                &#8250;
+              </button>
+              <button class="bs-btn" id="book-search-close" title="Close search" aria-label="Close search" ref={refs.bookSearchClose}>
+                &#10005;
+              </button>
+            </span>
+          </div>
+          <div class="book-search-results" id="book-search-results" ref={refs.bookSearchResults} hidden />
         </div>
         <div class="content-area" ref={refs.contentArea}>
           <div class="chapter-panel" style="flex: 0 0 50%" ref={refs.chapterPanel}>

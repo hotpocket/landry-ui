@@ -109,6 +109,8 @@ function makeRefs(): ShellRefs {
     'miniPrev', 'miniPlay', 'miniNext', 'tsDec', 'tsInc', 'followBtn',
     'readingBtn', 'transcriptChunks', 'currentTime', 'totalTime', 'trackBar',
     'progress', 'back30', 'prevBtn', 'playBtn', 'nextBtn', 'fwd30', 'speedBtn',
+    'bookSearchInput', 'bookSearchResults', 'bookSearchNav', 'bookSearchPos',
+    'bookSearchPrev', 'bookSearchNext', 'bookSearchClose',
   ] as const;
   const refs = {} as Record<string, unknown>;
   for (const k of keys) refs[k] = createRef();

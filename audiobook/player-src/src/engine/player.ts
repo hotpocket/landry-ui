@@ -69,6 +69,22 @@ let urlWired = false;
 let saveProgressTimer: ReturnType<typeof setInterval> | null = null;
 let activeEngine: PlayerEngine | null = null;
 
+/**
+ * Where the next book to open should land, set by a host's "Continue reading"
+ * (continueAt) just before it routes to that book. Held in memory, never in
+ * storage: it is one tap's intent, and the next openBook spends it whichever
+ * book that is, so it cannot surface later as a jump nobody asked for. The tap
+ * is the consent an in-book offer asks for; a place from another device lands
+ * exactly as an accepted offer does.
+ */
+let landing: { bookId: string; chapterN: number; seconds: number } | null = null;
+
+export function continueAt(point: { bookId: string; chapterN?: number | null; seconds?: number } | null): void {
+  landing = point && point.bookId && point.chapterN != null
+    ? { bookId: point.bookId, chapterN: point.chapterN, seconds: Math.max(0, point.seconds || 0) }
+    : null;
+}
+
 if (typeof document !== 'undefined') {
   // The document-level move/up listeners act on whatever drag is current;
   // wiring them per init() stacked a fresh pair — each closing over a dead
@@ -2008,10 +2024,31 @@ export class PlayerEngine {
     // the chapter's beginning: whoever sent the link meant the chapter, not
     // wherever this reader happened to stop in it. autoplay stays false either
     // way — arriving is not being played at.
-    const bt = Math.max(0, Math.min(p.bookTime || 0, this.bookDur()));
-    const startIdx = chapterIdx ?? findChapterIdxAt(this.currentBook, bt, this.summaryMode);
-    const offset = chapterIdx == null ? bt - this.chStart(this.currentBook.chapters[startIdx]) : 0;
-    this.loadChapter(startIdx, offset, false);
+    const land = landing;
+    landing = null;
+    const landIdx = land && land.bookId === this.bookKey(idx) && chapterIdx == null
+      ? chapterIdxForN(this.currentBook.chapters, land.chapterN) : -1;
+    if (land && landIdx >= 0) {
+      const ch = this.currentBook.chapters[landIdx];
+      const t = landingSeconds(land.seconds, this.chDur(ch));
+      // Saved before the load, as acceptOffer does, and for the same reason;
+      // and saved at all so this device's place is now the newest, which is
+      // what withdraws the in-book offer for the same record.
+      writeProgress(this.store, this.bookKey(idx), {
+        bookTime: this.chStart(ch) + t,
+        duration: this.bookDur(),
+        chapterIdx: landIdx,
+        chapterN: ch.n ?? null,
+        timeInChapter: t,
+        summary: this.summaryMode,
+      });
+      this.loadChapter(landIdx, t, false);
+    } else {
+      const bt = Math.max(0, Math.min(p.bookTime || 0, this.bookDur()));
+      const startIdx = chapterIdx ?? findChapterIdxAt(this.currentBook, bt, this.summaryMode);
+      const offset = chapterIdx == null ? bt - this.chStart(this.currentBook.chapters[startIdx]) : 0;
+      this.loadChapter(startIdx, offset, false);
+    }
 
     // The worker cannot know which renders are current — it sees URLs, not
     // manifests — so the page that does know tells it, once per book open.

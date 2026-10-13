@@ -186,6 +186,9 @@ export interface ResumePoint {
   seconds: number;
   progress: number | null;
   at: string | null;
+  /** Another device's place (true), or this device's own (false). Only the
+   *  first is an offer, so only the first is ever marked taken. */
+  remote: boolean;
 }
 
 /**
@@ -225,21 +228,27 @@ export function resumePoint(store: KeyValueStore,
   }
   if (best) {
     return { bookId: id, chapterN: best.chapterN, seconds: best.seconds, progress: null,
-             at: best.updatedAt };
+             at: best.updatedAt, remote: true };
   }
   if (!local) return null;
   return { bookId: id, chapterN: local.chapterN ?? null, seconds: local.timeInChapter ?? 0,
            progress: Number.isFinite(local.progress) ? local.progress : null,
-           at: local.savedAt ?? null };
+           at: local.savedAt ?? null, remote: false };
 }
 
 /** Records that a host took `point` (continueAt): a remote place stops being
- *  offered, here and in the book, exactly as an accepted offer does. */
+ *  offered, here and in the book, exactly as an accepted offer does --
+ *  unconditionally, as that does: a watermark that refused an older stamp left
+ *  the tapped place offered, and stamps carry microseconds Date.parse drops
+ *  (Sol, round 4). This device's own place is no offer, and the record is the
+ *  in-book offer's too: writing a local stamp there would revive a remote
+ *  place the reader turned down (release review, 2026-10-13). */
 export function acceptPoint(store: KeyValueStore,
-                            point: { bookId?: unknown; at?: unknown } | null | undefined): void {
-  if (point && typeof point.bookId === 'string' && typeof point.at === 'string') {
-    set(store, DISMISSED(point.bookId), point.at);
-  }
+                            point: { bookId?: unknown; at?: unknown; remote?: unknown }
+                              | null | undefined): void {
+  if (!point || point.remote !== true) return;
+  if (typeof point.bookId !== 'string' || typeof point.at !== 'string') return;
+  set(store, DISMISSED(point.bookId), point.at);
 }
 
 function isChapterN(v: unknown): v is number {

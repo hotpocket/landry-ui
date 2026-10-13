@@ -56,7 +56,7 @@
 import assert from 'node:assert';
 import { test } from 'node:test';
 import {
-  readProgress, writeProgress, readLastBookId, resumeBookId, resumePoint,
+  readProgress, writeProgress, readLastBookId, resumeBookId, resumePoint, acceptPoint,
   migrateLegacyProgress, safeStore, ZERO,
 } from '../audiobook/player-src/src/core/progress.ts';
 import { bookId } from '../audiobook/player-src/src/core/routing.ts';
@@ -412,7 +412,8 @@ test('X. resumePoint: this device\'s own last place, chapter and second', () => 
   writeProgress(s, 'alpha', snap(310, { chapterIdx: 2, chapterN: 3, timeInChapter: 75 }),
                 at('2026-09-20T10:00:00Z'));
   assert.deepEqual(resumePoint(s, []), {
-    bookId: 'alpha', chapterN: 3, seconds: 75, progress: 0.31, at: '2026-09-20T10:00:00Z' });
+    bookId: 'alpha', chapterN: 3, seconds: 75, progress: 0.31, at: '2026-09-20T10:00:00Z',
+    remote: false });
 });
 
 test('X2. resumePoint: a newer place on another device is that device\'s place', () => {
@@ -420,7 +421,8 @@ test('X2. resumePoint: a newer place on another device is that device\'s place',
   writeProgress(s, 'alpha', snap(10), at('2026-09-20T10:00:00Z'));
   const r = { bookId: 'beta', chapterN: 7, seconds: 42, updatedAt: '2026-09-20T11:00:00Z' };
   assert.deepEqual(resumePoint(s, [r]), {
-    bookId: 'beta', chapterN: 7, seconds: 42, progress: null, at: '2026-09-20T11:00:00Z' });
+    bookId: 'beta', chapterN: 7, seconds: 42, progress: null, at: '2026-09-20T11:00:00Z',
+    remote: true });
 });
 
 test('X3. resumePoint: nothing anywhere, or a store that throws, is null', () => {
@@ -459,4 +461,24 @@ test('X6. resumePoint: a remote place of the wrong shape is skipped', () => {
                    { bookId: 'beta', chapterN: 2, seconds: 4, updatedAt: 7 }]) {
     assert.equal(resumePoint(s, [r]).bookId, 'alpha', JSON.stringify(r));
   }
+});
+
+test('X7. a place taken from the card: a remote one is taken as the in-book offer takes it', () => {
+  const K = 'rs-remote-dismissed-alpha';
+  const s = fakeStore({ [K]: '2026-09-20T12:00:00Z' });
+  acceptPoint(s, { bookId: 'alpha', at: '2026-09-20T13:00:00Z', remote: false });
+  assert.equal(s.getItem(K), '2026-09-20T12:00:00Z', 'this device\'s own place is no offer');
+  acceptPoint(s, { bookId: 'alpha', at: '2026-09-20T14:00:00Z', remote: true });
+  assert.equal(s.getItem(K), '2026-09-20T14:00:00Z', 'a remote place is taken');
+});
+
+test('X8. a remote place older than one turned down is still taken once tapped', () => {
+  // Sol, round 4: a watermark that refused the older stamp left it offered.
+  const s = fakeStore({ 'rs-remote-dismissed-alpha': '2026-09-20T12:00:00Z' });
+  writeProgress(s, 'alpha', snap(10, { chapterN: 1, timeInChapter: 10 }), at('2026-09-20T10:00:00Z'));
+  const r = { bookId: 'alpha', chapterN: 9, seconds: 4, updatedAt: '2026-09-20T11:00:00Z' };
+  const pt = resumePoint(s, [r]);
+  assert.equal(pt.remote, true, 'precondition: the remote place is offered');
+  acceptPoint(s, pt);
+  assert.equal(resumePoint(s, [r]).remote, false, 'once taken, it is not offered again');
 });

@@ -22,7 +22,13 @@
 //   D. resumeTarget() prefers a newer record from another device, for another
 //      book, and skips ids the host says are not in its library
 //   E. with storage that throws from its getter (iOS "Block All Cookies"),
-//      resumeTarget() answers null instead of throwing
+//      resumeTarget() and resumePoint() answer null instead of throwing
+//   F. resumePoint() answers the same book with the place in it -- chapter
+//      and second -- for a host's "Continue reading"
+//   G. continueAt(point) then opening that book lands at the point's chapter
+//      and second -- a place from another device included, which the book
+//      alone would only offer -- and saves it as this device's place
+//   G2. continueAt is one-shot: another book opening first spends it
 
 import { createRequire } from 'module';
 import { readFileSync, existsSync } from 'fs';
@@ -127,6 +133,57 @@ const launch = async (page) => {
     check(r.newer === 'plain-book', `D: a newer record elsewhere wins (was ${r.newer})`);
     check(r.unknown === 'test-book', `D: an id outside the library is skipped (was ${r.unknown})`);
   }
+  // --- F -------------------------------------------------------------------
+  const pt = await page.evaluate(() => {
+    if (typeof RepoStoryPlayer.resumePoint !== 'function') return 'missing';
+    const far = new Date(Date.now() + 864e5).toISOString();
+    return {
+      here: RepoStoryPlayer.resumePoint(),
+      there: RepoStoryPlayer.resumePoint([{ bookId: 'plain-book', chapterN: 2, seconds: 9,
+                                            updatedAt: far }]),
+    };
+  });
+  check(pt !== 'missing', 'F: the player exposes resumePoint');
+  if (pt !== 'missing') {
+    check(pt.here && pt.here.bookId === 'test-book' && typeof pt.here.seconds === 'number',
+      `F: this device's place in its last book (was ${JSON.stringify(pt.here)})`);
+    check(pt.there && pt.there.bookId === 'plain-book' && pt.there.chapterN === 2 && pt.there.seconds === 9,
+      `F: a newer place elsewhere is that place (was ${JSON.stringify(pt.there)})`);
+  }
+  await ctx.close();
+}
+
+// --- G, G2 -----------------------------------------------------------------
+{
+  const { ctx, page } = await fresh();
+  await launch(page);
+  const api = await page.evaluate(() => typeof RepoStoryPlayer.continueAt);
+  check(api === 'function', `G: the player exposes continueAt (was ${api})`);
+  if (api === 'function') {
+    await page.evaluate(() => {
+      RepoStoryPlayer.continueAt({ bookId: 'test-book', chapterN: 2, seconds: 9 });
+      location.hash = '#/test-book';
+    });
+    await page.waitForSelector('#player-view.active');
+    await page.waitForTimeout(300);
+    const r = await page.evaluate(() => ({
+      ch: document.querySelector('#chapter-list .active')?.textContent || '',
+      rec: JSON.parse(localStorage.getItem('rs-progress-test-book') || 'null'),
+    }));
+    check(/Two/.test(r.ch), `G: the book opens at the point's chapter (was ${JSON.stringify(r.ch)})`);
+    check(r.rec && r.rec.chapterN === 2 && r.rec.timeInChapter === 9,
+      `G: and its second, saved as this device's place (was ${JSON.stringify(r.rec)})`);
+
+    await toShelf(page);
+    await page.evaluate(() => RepoStoryPlayer.continueAt({ bookId: 'plain-book', chapterN: 1, seconds: 20 }));
+    await openBook(page, 'Test Book');
+    await toShelf(page);
+    await openBook(page, 'Plain Book');
+    await page.waitForTimeout(300);
+    const rec = await page.evaluate(() => JSON.parse(localStorage.getItem('rs-progress-plain-book') || 'null'));
+    check(!rec || rec.timeInChapter !== 20,
+      `G2: a landing another book spent does not apply later (was ${JSON.stringify(rec)})`);
+  }
   await ctx.close();
 }
 
@@ -139,9 +196,11 @@ const launch = async (page) => {
   });
   await launch(page);
   const r = await page.evaluate(() => {
-    try { return { v: RepoStoryPlayer.resumeTarget([]) }; } catch (e) { return { err: String(e) }; }
+    try { return { v: RepoStoryPlayer.resumeTarget([]), p: RepoStoryPlayer.resumePoint([]) }; }
+    catch (e) { return { err: String(e) }; }
   });
   check(!r.err && r.v === null, `E: blocked storage answers null (was ${JSON.stringify(r)})`);
+  check(!r.err && r.p === null, `E: and resumePoint too (was ${JSON.stringify(r)})`);
   await ctx.close();
 }
 

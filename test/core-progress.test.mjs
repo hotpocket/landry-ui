@@ -56,7 +56,7 @@
 import assert from 'node:assert';
 import { test } from 'node:test';
 import {
-  readProgress, writeProgress, readLastBookId, resumeBookId,
+  readProgress, writeProgress, readLastBookId, resumeBookId, resumePoint,
   migrateLegacyProgress, safeStore, ZERO,
 } from '../audiobook/player-src/src/core/progress.ts';
 import { bookId } from '../audiobook/player-src/src/core/routing.ts';
@@ -402,4 +402,35 @@ test('W2. a local record with no stamp loses to any stamped remote one', () => {
                         'rs-progress-alpha': JSON.stringify({ bookTime: 5, progress: 0.1 }) });
   assert.equal(resumeBookId(s, [remote('beta', '2020-01-01T00:00:00Z')]), 'beta');
   assert.equal(resumeBookId(s, []), 'alpha', 'but still resumes when it is all there is');
+});
+
+
+// "Continue reading" (books.landry.bot's home page): the same choice as
+// resumeBookId, with where in that book the reader left off.
+test('X. resumePoint: this device\'s own last place, chapter and second', () => {
+  const s = fakeStore();
+  writeProgress(s, 'alpha', snap(310, { chapterIdx: 2, chapterN: 3, timeInChapter: 75 }),
+                at('2026-09-20T10:00:00Z'));
+  assert.deepEqual(resumePoint(s, []), {
+    bookId: 'alpha', chapterN: 3, seconds: 75, progress: 0.31, at: '2026-09-20T10:00:00Z' });
+});
+
+test('X2. resumePoint: a newer place on another device is that device\'s place', () => {
+  const s = fakeStore();
+  writeProgress(s, 'alpha', snap(10), at('2026-09-20T10:00:00Z'));
+  const r = { bookId: 'beta', chapterN: 7, seconds: 42, updatedAt: '2026-09-20T11:00:00Z' };
+  assert.deepEqual(resumePoint(s, [r]), {
+    bookId: 'beta', chapterN: 7, seconds: 42, progress: null, at: '2026-09-20T11:00:00Z' });
+});
+
+test('X3. resumePoint: nothing anywhere, or a store that throws, is null', () => {
+  assert.equal(resumePoint(fakeStore(), []), null);
+  const s = safeStore(() => { throw new Error('The operation is insecure.'); });
+  assert.equal(resumePoint(s, []), null);
+});
+
+test('X4. resumePoint: a book the host does not know is not offered', () => {
+  const s = fakeStore();
+  writeProgress(s, 'gone', snap(10), at('2026-09-22T10:00:00Z'));
+  assert.equal(resumePoint(s, [], (id) => id !== 'gone'), null);
 });

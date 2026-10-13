@@ -175,6 +175,47 @@ export function resumeBookId(store: KeyValueStore,
   return best;
 }
 
+/** Where the reader left off: the book resumeBookId picks, and the place in
+ *  it. `progress` (0..1 through the book) is known only for this device's
+ *  own record; `at` is when that place was saved. */
+export interface ResumePoint {
+  bookId: string;
+  chapterN: number | null;
+  seconds: number;
+  progress: number | null;
+  at: string | null;
+}
+
+/**
+ * resumeBookId's choice, with the place in that book -- for a host's
+ * "Continue reading" (books.landry.bot's home page). Same rule, one place:
+ * the newest record, this device's or another's, for a book the host knows.
+ */
+export function resumePoint(store: KeyValueStore,
+                            remote: readonly { bookId: string; chapterN: number; seconds: number;
+                                               updatedAt: string }[] = [],
+                            known: (id: string) => boolean = () => true): ResumePoint | null {
+  const id = resumeBookId(store, remote, known);
+  if (id === null) return null;
+  const local = readLastBookId(store) === id ? readProgress(store, id) : null;
+  const localAt = local ? Date.parse(local.savedAt ?? '') : NaN;
+  let best: (typeof remote)[number] | null = null;
+  for (const r of remote) {
+    if (r.bookId !== id) continue;
+    const t = Date.parse(r.updatedAt);
+    if (!(t > (Number.isFinite(localAt) ? localAt : -Infinity))) continue;
+    if (!best || t > Date.parse(best.updatedAt)) best = r;
+  }
+  if (best) {
+    return { bookId: id, chapterN: best.chapterN, seconds: best.seconds, progress: null,
+             at: best.updatedAt };
+  }
+  if (!local) return null;
+  return { bookId: id, chapterN: local.chapterN ?? null, seconds: local.timeInChapter ?? 0,
+           progress: Number.isFinite(local.progress) ? local.progress : null,
+           at: local.savedAt ?? null };
+}
+
 /**
  * Carry index-keyed records onto their books, once, and retire the old keys.
  *

@@ -8,10 +8,10 @@
 
 import { render, createRef } from 'preact';
 import { Shell, type ShellRefs } from './view/Shell.tsx';
-import { PlayerEngine } from './engine/player.ts';
+import { PlayerEngine, continueAt } from './engine/player.ts';
 import { readDiag, type DiagEntry } from './core/diagnostics.ts';
 import type { RemoteProgressBackend, RemoteRecord } from './core/remote-progress.ts';
-import { resumeBookId } from './core/progress.ts';
+import { resumeBookId, resumePoint as resumePointOf, type ResumePoint } from './core/progress.ts';
 import { safeStorage } from './core/storage.ts';
 
 export interface PlayerChrome {
@@ -187,6 +187,16 @@ function resumeTarget(remote: RemoteRecord[] = [], knownIds?: string[]): string 
   return resumeBookId(safeStorage(), remote, known ? (id) => known.has(id) : undefined);
 }
 
+/**
+ * resumeTarget's choice with the place in that book -- {bookId, chapterN,
+ * seconds, progress, at} or null -- for a host's "Continue reading". Same
+ * guard: a store that throws reads as empty, and empty offers nothing.
+ */
+function resumePoint(remote: RemoteRecord[] = [], knownIds?: string[]): ResumePoint | null {
+  const known = knownIds ? new Set(knownIds) : null;
+  return resumePointOf(safeStorage(), remote, known ? (id) => known.has(id) : undefined);
+}
+
 // Named, not default: esbuild's globalName would otherwise expose the API as
 // RepoStoryPlayer.default.init and silently break every host.
-export { init, diagnostics, resumeTarget };
+export { init, diagnostics, resumeTarget, resumePoint, continueAt };

@@ -8,10 +8,10 @@
 
 import { render, createRef } from 'preact';
 import { Shell, type ShellRefs } from './view/Shell.tsx';
-import { PlayerEngine, continueAt } from './engine/player.ts';
+import { PlayerEngine, continueAt as landAt } from './engine/player.ts';
 import { readDiag, type DiagEntry } from './core/diagnostics.ts';
 import type { RemoteProgressBackend, RemoteRecord } from './core/remote-progress.ts';
-import { resumeBookId, resumePoint as resumePointOf, type ResumePoint } from './core/progress.ts';
+import { resumeBookId, resumePoint as resumePointOf, acceptPoint, type ResumePoint } from './core/progress.ts';
 import { safeStorage } from './core/storage.ts';
 
 export interface PlayerChrome {
@@ -197,6 +197,17 @@ function resumeTarget(remote: RemoteRecord[] = [], knownIds?: string[]): string 
 function resumePoint(remote: RemoteRecord[] = [], knownIds?: string[]): ResumePoint | null {
   const known = knownIds ? new Set(knownIds) : null;
   return resumePointOf(safeStorage(), remote, known ? (id) => known.has(id) : undefined);
+}
+
+/**
+ * A host's "Continue reading" was tapped on `point` (a resumePoint answer):
+ * the next book opened lands there, and that place counts as taken -- not
+ * offered again, here or in the book, even if it cannot land (release review,
+ * 2026-10-13: a chapter gone from this build offered the same point forever).
+ */
+function continueAt(point: ResumePoint | null): void {
+  acceptPoint(safeStorage(), point);
+  landAt(point);
 }
 
 // Named, not default: esbuild's globalName would otherwise expose the API as

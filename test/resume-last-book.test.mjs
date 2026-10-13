@@ -29,6 +29,8 @@
 //      and second -- a place from another device included, which the book
 //      alone would only offer -- and saves it as this device's place
 //   G2. continueAt is one-shot: another book opening first spends it
+//   G3. a place taken through continueAt is not offered again, even when it
+//      could not land (its chapter is not in this build of the book)
 
 import { createRequire } from 'module';
 import { readFileSync, existsSync } from 'fs';
@@ -183,6 +185,19 @@ const launch = async (page) => {
     const rec = await page.evaluate(() => JSON.parse(localStorage.getItem('rs-progress-plain-book') || 'null'));
     check(!rec || rec.timeInChapter !== 20,
       `G2: a landing another book spent does not apply later (was ${JSON.stringify(rec)})`);
+
+    await toShelf(page);
+    const again = await page.evaluate(() => {
+      const r = { bookId: 'plain-book', chapterN: 9, seconds: 5,
+                  updatedAt: new Date(Date.now() + 864e5).toISOString() };
+      const before = RepoStoryPlayer.resumePoint([r]);
+      RepoStoryPlayer.continueAt(before);
+      return { before, after: RepoStoryPlayer.resumePoint([r]) };
+    });
+    check(again.before && again.before.chapterN === 9,
+      `G3: precondition -- the remote place is offered (was ${JSON.stringify(again.before)})`);
+    check(!again.after || again.after.chapterN !== 9,
+      `G3: once taken, it is not offered again (was ${JSON.stringify(again.after)})`);
   }
   await ctx.close();
 }

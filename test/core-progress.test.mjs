@@ -434,3 +434,29 @@ test('X4. resumePoint: a book the host does not know is not offered', () => {
   writeProgress(s, 'gone', snap(10), at('2026-09-22T10:00:00Z'));
   assert.equal(resumePoint(s, [], (id) => id !== 'gone'), null);
 });
+
+test('X5. resumePoint: a stored place of the wrong shape is no place', () => {
+  // Storage is anyone's to write: a record whose fields are not numbers must
+  // not reach a host that formats them (release review, 2026-10-13).
+  for (const bad of [{ toString: null }, 'x', null, Infinity]) {
+    const s = fakeStore({ 'rs-last-book-id': 'alpha',
+      'rs-progress-alpha': JSON.stringify({ bookId: 'alpha', savedAt: '2026-09-20T10:00:00Z',
+        bookTime: 5, progress: 0.1, chapterN: 1, timeInChapter: bad }) });
+    if (bad === Infinity) s.setItem('rs-progress-alpha', s.getItem('rs-progress-alpha').replace('null}', '1e999}'));
+    assert.equal(resumePoint(s, []), null, `timeInChapter ${JSON.stringify(bad)}`);
+  }
+  const s = fakeStore({ 'rs-last-book-id': 'alpha',
+    'rs-progress-alpha': JSON.stringify({ bookId: 'alpha', savedAt: '2026-09-20T10:00:00Z',
+      bookTime: 5, progress: 0.1, chapterN: { a: 1 }, timeInChapter: 3 }) });
+  assert.equal(resumePoint(s, []), null, 'chapterN an object');
+});
+
+test('X6. resumePoint: a remote place of the wrong shape is skipped', () => {
+  const s = fakeStore();
+  writeProgress(s, 'alpha', snap(10, { chapterN: 1, timeInChapter: 10 }), at('2026-09-20T10:00:00Z'));
+  for (const r of [{ bookId: 'beta', chapterN: 'x', seconds: 4, updatedAt: '2026-09-20T11:00:00Z' },
+                   { bookId: 'beta', chapterN: 2, seconds: { toString: null }, updatedAt: '2026-09-20T11:00:00Z' },
+                   { bookId: 'beta', chapterN: 2, seconds: 4, updatedAt: 7 }]) {
+    assert.equal(resumePoint(s, [r]).bookId, 'alpha', JSON.stringify(r));
+  }
+});

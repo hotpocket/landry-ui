@@ -68,7 +68,7 @@ export interface RemoteProgressBackend {
 export const DRIFT_S = 30;
 
 /** Which remote record the reader has already said no to, per book. */
-const DISMISSED = (bookId: string) => `rs-remote-dismissed-${bookId}`;
+export const DISMISSED = (bookId: string) => `rs-remote-dismissed-${bookId}`;
 
 export interface RemoteProgressDeps {
   /** Absent means the whole feature is absent. That is the signed-out path. */

@@ -18,6 +18,8 @@
  * library.
  */
 
+import { DISMISSED } from './remote-progress.ts';
+
 export interface KeyValueStore {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
@@ -192,12 +194,27 @@ export interface ResumePoint {
  * the newest record, this device's or another's, for a book the host knows.
  */
 export function resumePoint(store: KeyValueStore,
-                            remote: readonly { bookId: string; chapterN: number; seconds: number;
-                                               updatedAt: string }[] = [],
+                            rows: readonly { bookId: string; chapterN: number; seconds: number;
+                                             updatedAt: string }[] = [],
                             known: (id: string) => boolean = () => true): ResumePoint | null {
-  const id = resumeBookId(store, remote, known);
+  // Both sides are checked at this boundary: storage is anyone's to write and
+  // the rows are a network's answer, and a host formats what comes out of
+  // here (release review, 2026-10-13). A place of the wrong shape is no place.
+  // A remote place this browser already took or turned down is not offered
+  // again -- the in-book offer's own record of that (continueAt writes it too).
+  const remote = rows.filter((r) => r && typeof r.bookId === 'string'
+    && typeof r.updatedAt === 'string' && isChapterN(r.chapterN) && isSeconds(r.seconds)
+    && get(store, DISMISSED(r.bookId)) !== r.updatedAt);
+  const last = readLastBookId(store);
+  const stored = last === null ? null : readProgress(store, last);
+  const sound = !!stored && (stored.chapterN == null || isChapterN(stored.chapterN))
+    && (stored.timeInChapter === undefined || isSeconds(stored.timeInChapter))
+    && (stored.savedAt === undefined || typeof stored.savedAt === 'string');
+  // An unsound local record is left out of the choice as well as the answer:
+  // rather than a book with no place, the newest sound place there is.
+  const id = resumeBookId(sound ? store : withoutLastBook(store), remote, known);
   if (id === null) return null;
-  const local = readLastBookId(store) === id ? readProgress(store, id) : null;
+  const local = sound && last === id ? stored : null;
   const localAt = local ? Date.parse(local.savedAt ?? '') : NaN;
   let best: (typeof remote)[number] | null = null;
   for (const r of remote) {
@@ -214,6 +231,32 @@ export function resumePoint(store: KeyValueStore,
   return { bookId: id, chapterN: local.chapterN ?? null, seconds: local.timeInChapter ?? 0,
            progress: Number.isFinite(local.progress) ? local.progress : null,
            at: local.savedAt ?? null };
+}
+
+/** Records that a host took `point` (continueAt): a remote place stops being
+ *  offered, here and in the book, exactly as an accepted offer does. */
+export function acceptPoint(store: KeyValueStore,
+                            point: { bookId?: unknown; at?: unknown } | null | undefined): void {
+  if (point && typeof point.bookId === 'string' && typeof point.at === 'string') {
+    set(store, DISMISSED(point.bookId), point.at);
+  }
+}
+
+function isChapterN(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0;
+}
+
+function isSeconds(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0;
+}
+
+/** `store` with no last book, for a choice that must not see it. */
+function withoutLastBook(store: KeyValueStore): KeyValueStore {
+  return {
+    getItem: (k) => (k === LAST_BOOK_ID ? null : get(store, k)),
+    setItem: () => {},
+    removeItem: () => {},
+  };
 }
 
 /**

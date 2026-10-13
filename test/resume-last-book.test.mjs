@@ -31,6 +31,8 @@
 //   G2. continueAt is one-shot: another book opening first spends it
 //   G3. a place taken through continueAt is not offered again, even when it
 //      could not land (its chapter is not in this build of the book)
+//   G4. continuing this device's own place leaves the in-book offer's record
+//      of a remote place turned down exactly as it was
 
 import { createRequire } from 'module';
 import { readFileSync, existsSync } from 'fs';
@@ -198,6 +200,22 @@ const launch = async (page) => {
       `G3: precondition -- the remote place is offered (was ${JSON.stringify(again.before)})`);
     check(!again.after || again.after.chapterN !== 9,
       `G3: once taken, it is not offered again (was ${JSON.stringify(again.after)})`);
+
+    const kept = await page.evaluate(() => {
+      const turnedDown = '2030-01-01T00:00:00.000Z';
+      localStorage.setItem('rs-remote-dismissed-plain-book', turnedDown);
+      localStorage.setItem('rs-last-book-id', 'plain-book');
+      localStorage.setItem('rs-progress-plain-book', JSON.stringify({ bookId: 'plain-book',
+        savedAt: new Date().toISOString(), bookTime: 5, progress: 0.2, chapterIdx: 0,
+        chapterN: 9, timeInChapter: 5 }));
+      const local = RepoStoryPlayer.resumePoint([]);
+      RepoStoryPlayer.continueAt(local);
+      return { local, stamp: localStorage.getItem('rs-remote-dismissed-plain-book') };
+    });
+    check(kept.local && kept.local.chapterN === 9,
+      `G4: precondition -- this device's own place is the point (was ${JSON.stringify(kept.local)})`);
+    check(kept.stamp === '2030-01-01T00:00:00.000Z',
+      `G4: the turned-down remote place stays turned down (was ${kept.stamp})`);
   }
   await ctx.close();
 }

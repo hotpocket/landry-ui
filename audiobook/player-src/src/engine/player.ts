@@ -183,6 +183,7 @@ export class PlayerEngine {
    *  smooth scroll still in flight is not mistaken for one out of view. */
   private followedEl: Element | null = null;
   private bookSearch: BookSearch | null = null;
+  private librarySearch: { dispose(): void } | null = null;
   /** Set while book search opens another book at a match. */
   private searchOpening = false;
   /** Every chapter load is numbered; book search's own jump records the number
@@ -289,6 +290,7 @@ export class PlayerEngine {
   private dispose(): void {
     this.disposed = true;          // stops the rAF loop at its next frame
     this.bookSearch?.dispose();
+    this.librarySearch?.dispose();
     // Document-level listeners outlive this engine's DOM by construction; a
     // successor with its own menu would otherwise be closed by the dead one's.
     this.closeChapterMenu(false);
@@ -2354,7 +2356,7 @@ export class PlayerEngine {
       loaded: this.transcriptsBySlug,
     }, () => { /* replaced by wireSearch */ });
 
-    wireSearch({
+    this.librarySearch = wireSearch({
       input,
       results,
       spinner,

@@ -109,10 +109,18 @@ export interface SearchViewDeps {
 
 const DEBOUNCE_MS = 120;
 
-export function wireSearch(d: SearchViewDeps): void {
+/**
+ * Wire the library search. Returns its disposer: a host that re-renders builds
+ * a new engine into the same DOM, and without this the old one's listeners and
+ * transcript callbacks kept painting rows that led to a dead engine.
+ */
+export function wireSearch(d: SearchViewDeps): { dispose(): void } {
   let timer: ReturnType<typeof setTimeout> | null = null;
+  const ac = new AbortController();
+  const signal = ac.signal;
 
   const setSpinner = (loading: string[]) => {
+    if (signal.aborted) return;       // the spinner is shared with the successor
     if (!loading.length) {
       d.spinner.hidden = true;
       d.spinner.title = '';
@@ -125,6 +133,7 @@ export function wireSearch(d: SearchViewDeps): void {
   };
 
   const render = () => {
+    if (signal.aborted) return;
     const q = d.input.value;
     if (!q.trim()) {
       d.results.hidden = true;
@@ -148,7 +157,7 @@ export function wireSearch(d: SearchViewDeps): void {
 
     d.bookList.hidden = true;
     d.results.hidden = false;
-    paint(d, groups, titleHits, q);
+    paint(d, groups, titleHits, q, signal);
   };
 
   const onInput = () => {
@@ -167,10 +176,23 @@ export function wireSearch(d: SearchViewDeps): void {
     }, DEBOUNCE_MS);
   };
 
-  d.input.addEventListener('input', onInput);
-  d.input.addEventListener('search', onInput);
+  d.input.addEventListener('input', onInput, { signal });
+  d.input.addEventListener('search', onInput, { signal });
   setSpinner([]);
   (d.loader as unknown as { onProgress: (l: string[]) => void }).onProgress = setSpinner;
+  // The DOM may be a predecessor's, rows and all: none of them may survive.
+  // A query left in the box is searched again by this instance.
+  d.results.innerHTML = '';
+  d.results.hidden = true;
+  d.bookList.hidden = false;
+  if (d.input.value.trim()) onInput();
+
+  return {
+    dispose() {
+      ac.abort();
+      if (timer) { clearTimeout(timer); timer = null; }
+    },
+  };
 }
 
 function paint(
@@ -178,6 +200,7 @@ function paint(
   groups: SearchGroup[],
   titleHits: { slug?: string; title?: string }[],
   query: string,
+  signal: AbortSignal,
 ): void {
   d.results.innerHTML = '';
 
@@ -192,7 +215,7 @@ function paint(
       const row = document.createElement('button');
       row.className = 'search-hit search-hit-book';
       row.textContent = b.title ?? b.slug ?? '';
-      row.addEventListener('click', () => d.goTo(b.slug!, 1, 0));
+      row.addEventListener('click', () => d.goTo(b.slug!, 1, 0), { signal });
       sec.appendChild(row);
     }
     d.results.appendChild(sec);
@@ -220,7 +243,7 @@ function paint(
       text.className = 'search-hit-text';
       text.appendChild(highlight(m.snippet, query.trim()));
       row.append(where, text);
-      row.addEventListener('click', () => d.goTo(m.bookSlug, m.chapterIndex, m.start));
+      row.addEventListener('click', () => d.goTo(m.bookSlug, m.chapterIndex, m.start), { signal });
       sec.appendChild(row);
     }
     if (g.count > CAP) {

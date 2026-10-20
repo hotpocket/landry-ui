@@ -100,6 +100,11 @@ export class BookSearch {
       this.chosen = true;
       this.run(this.el.input.value);
     }, { signal });
+    // A click is a choice even on the radio already checked — the fallback
+    // This book, before any chapter exists — which fires no `change`.
+    el.scope.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('input[type=radio]')) this.chosen = true;
+    }, { signal });
     el.prev.addEventListener('click', () => this.step(-1), { signal });
     el.next.addEventListener('click', () => this.step(1), { signal });
     el.close.addEventListener('click', () => this.reset(), { signal });

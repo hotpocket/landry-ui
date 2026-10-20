@@ -73,10 +73,12 @@ const transcript = (s) => ({ slug: s, chapters: [1, 2, 3].map((n) => ({
 })) });
 let slowB = 0;
 const page = (chrome) => `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}${readFileSync(join(player, 'player.css'))}</style><div id="mount"></div><script>${readFileSync(join(player, 'player.js'))}</script><script>window.__opts=()=>({container:document.getElementById('mount'),books:${JSON.stringify([book('a'), book('b')])},audioBaseUrl:'/audio/',chrome:${JSON.stringify(chrome)}});RepoStoryPlayer.init(window.__opts());</script>`;
+const emptyPage = `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}${readFileSync(join(player, 'player.css'))}</style><div id="mount"></div><script>${readFileSync(join(player, 'player.js'))}</script><script>window.__books=${JSON.stringify([{ slug: 'e', title: 'Empty', duration: 0, chapters: [] }])};RepoStoryPlayer.init({container:document.getElementById('mount'),books:window.__books,audioBaseUrl:'/audio/',chrome:{nowPlaying:false}});</script>`;
 const fetched = [];
+const fetchedAt = {};
 const server = createServer((req, res) => {
   if (req.url.startsWith('/t/')) {
-    const s = req.url.slice(3, 4); fetched.push(s);
+    const s = req.url.slice(3, 4); fetched.push(s); fetchedAt[s] = Date.now();
     if (s === 'b' && slowB) { setTimeout(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ books: [transcript(s)] })); }, slowB); return; }
     res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ books: [transcript(s)] })); return;
   }
@@ -89,7 +91,8 @@ const server = createServer((req, res) => {
     res.end(buf.subarray(from, to + 1)); return;
   }
   res.writeHead(200, { 'content-type': 'text/html' });
-  res.end(page(req.url.startsWith('/header') ? {} : { nowPlaying: false }));
+  res.end(req.url.startsWith('/empty') ? emptyPage
+    : page(req.url.startsWith('/header') ? {} : { nowPlaying: false }));
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${server.address().port}`;
@@ -258,7 +261,11 @@ try {
   slowB = 0; pass++;
 
   // S12: re-init mid All-books search with Beta still in flight.
-  slowB = 1500;
+  // Long enough that Beta lands only after the new instance has its query
+  // AND its scope set: landing earlier, the scope change re-runs the search
+  // and repaints over a corrupted list before anything is asserted, which is
+  // how this test once passed with the dispose guard removed.
+  slowB = 4000;
   const ri = await browser.newPage({ viewport: { width: 900, height: 900 } });
   ri.on('pageerror', (e) => errors.push(e.message));
   // Count live document pointerdown listeners, honouring removal and abort.
@@ -289,7 +296,8 @@ try {
   await typeQuery(ri, 'dragon');
   await ri.check('#book-search-scope input[value=book]');
   await ri.waitForSelector('#book-search-results .bs-row');
-  await new Promise((r) => setTimeout(r, 2200));              // Beta lands
+  assert.ok(!fetchedAt.b || Date.now() - fetchedAt.b < 4000, 'S12: Beta has not landed yet');
+  await new Promise((r) => setTimeout(r, 4500));              // Beta lands
   // The new instance resumes wherever it resumes; what matters is that its
   // This-book list was not replaced by the old instance's All-books one.
   const after = await rows(ri);
@@ -418,6 +426,22 @@ try {
   w = await where(sm);
   assert.ok(Math.abs(w.t - 3) < 0.3, `S10: at the summary passage (${w.t})`);
   assert.equal(w.current, 'tc-2-1', 'S10: the summary passage is marked');
+  pass++;
+
+  // S15: a book with no chapter yet offers only This book; clicking it — already
+  // checked — is still the reader's choice, and holds once a chapter arrives.
+  const em = await browser.newPage({ viewport: { width: 900, height: 900 } });
+  em.on('pageerror', (e) => errors.push(e.message));
+  await em.goto(`${base}/empty#/e`);
+  await em.waitForSelector('#book-search-input');
+  await typeQuery(em, 'dragon');
+  assert.deepEqual((await scopes(em)).map((x) => [x.value, x.checked]), [['book', true], ['all', false]],
+    'S15: no chapter, so This book only');
+  await em.click('#book-search-scope input[value=book]'); await settle(em);
+  await em.evaluate(() => { window.__books.find((b) => b.slug === 'e').chapters.push(
+    { n: 1, id: 0, title: 'Chapter 1: E', filename: 'chapter_0001.m4a?b=e', start: 0, end: 30, duration: 30 }); });
+  await typeQuery(em, 'drago');
+  assert.equal((await scopes(em)).find((x) => x.checked)?.value, 'book', 'S15: the explicit pick holds once a chapter exists');
   pass++;
 
   assert.deepEqual(errors, []);

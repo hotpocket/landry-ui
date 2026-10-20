@@ -20,7 +20,14 @@ chapter search for now").
   that can be jumped to (same rule as library search).
 - **Marks in the transcript** — every occurrence of the term in the chapter on
   screen is marked; the occurrences in the current match's passage are marked
-  more strongly.
+  more strongly. Marks are a bright orange-yellow, not a muddy tint (Brandon,
+  2026-10-20).
+- **Matching passages** — a passage that holds a match carries a dashed outline
+  and a very slight background change, so matches read as matches. They must
+  never look like the passage being played: that one alone keeps the solid
+  blue, and there is only ever one (Brandon, 2026-10-20: several highlighted
+  passages made the playing one confusing).
+
 
 ## Behaviour
 

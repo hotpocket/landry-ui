@@ -1682,10 +1682,13 @@ export class PlayerEngine {
       if (this.followTranscript) this.scrollToActiveChunk(box.clientHeight / 4);
       return;
     }
-    if (this.lastActiveChunkId !== null) {
-      box.querySelector(`#tc-${ch.id + 1}-${this.lastActiveChunkId}`)?.classList.remove('active');
-    }
+    // Every other passage, not the remembered one: a search jump forgets
+    // lastActiveChunkId to re-arm the scroll, and removing by that id left the
+    // passage it replaced blue as well — two "playing" passages on screen.
     const el = box.querySelector(`#tc-${ch.id + 1}-${chunk.index}`);
+    for (const a of [...box.querySelectorAll('.transcript-chunk.active')]) {
+      if (a !== el) a.classList.remove('active');
+    }
     if (el) {
       el.classList.add('active');
       if (this.followTranscript) this.scrollToActiveChunk();

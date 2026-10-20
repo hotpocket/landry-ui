@@ -87,6 +87,7 @@ export class BookSearch {
       parent.replaceChild(document.createTextNode(m.textContent ?? ''), m);
       parent.normalize();
     }
+    for (const c of [...box.querySelectorAll('.transcript-chunk.bs-match')]) c.classList.remove('bs-match');
     const q = this.query.toLowerCase();
     if (q.length < MIN_QUERY) return;
     const cur = this.at >= 0 ? this.hits[this.at] : null;
@@ -104,6 +105,9 @@ export class BookSearch {
         mark.className = 'bs-hit' + (curEl?.contains(hit) ? ' bs-current' : '');
         hit.replaceWith(mark);
         mark.appendChild(hit);
+        // The passage, so a match reads as a match from across the pane and
+        // never as the passage being played (docs/spec-book-search.md).
+        mark.closest('.transcript-chunk')?.classList.add('bs-match');
       }
     }
   }

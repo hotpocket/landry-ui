@@ -28,6 +28,12 @@
 //       summary mode lands in the summary track at the summary passage
 //   S11. a transcript the library search is already fetching still reaches the
 //       book search when it lands (one shared loader, two listeners)
+//   S12. a re-init disposes the old search: its late transcript callback does
+//       not touch the new list, and its listeners do not pile up
+//   S13. playback reaching the next chapter re-scopes and re-orders an open,
+//       unpicked search: This chapter becomes the new chapter, Enter stays in it
+//   S14. a book that lands after a pick joins navigation with the list closed:
+//       the counter grows and Next reaches it
 
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -66,7 +72,7 @@ const transcript = (s) => ({ slug: s, chapters: [1, 2, 3].map((n) => ({
     text: n === 2 && i === 1 ? 'In short, a dragon came.' : `Summary of b ${n}.${i}.` })) } : {}),
 })) });
 let slowB = 0;
-const page = (chrome) => `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}${readFileSync(join(player, 'player.css'))}</style><div id="mount"></div><script>${readFileSync(join(player, 'player.js'))}</script><script>RepoStoryPlayer.init({container:document.getElementById('mount'),books:${JSON.stringify([book('a'), book('b')])},audioBaseUrl:'/audio/',chrome:${JSON.stringify(chrome)}});</script>`;
+const page = (chrome) => `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}${readFileSync(join(player, 'player.css'))}</style><div id="mount"></div><script>${readFileSync(join(player, 'player.js'))}</script><script>window.__opts=()=>({container:document.getElementById('mount'),books:${JSON.stringify([book('a'), book('b')])},audioBaseUrl:'/audio/',chrome:${JSON.stringify(chrome)}});RepoStoryPlayer.init(window.__opts());</script>`;
 const fetched = [];
 const server = createServer((req, res) => {
   if (req.url.startsWith('/t/')) {
@@ -170,6 +176,20 @@ try {
   await p.click('#book-search-next'); await p.waitForFunction(() => /c=2/.test(document.querySelector('audio').src)); await settle(p);
   w = await where(p); assert.equal(w.current, 'tc-2-1', 'S5: wraps to the first'); pass++;
 
+  // S5b: a same-chapter reload (what retry and stall recovery do) landing
+  // before the jump's chapter change registers does not make the search's own
+  // jump look like playback moving on: the order and the count hold.
+  await p.evaluate(() => {
+    document.querySelector('#book-search-next').click();               // -> chapter 1, "2 of 3"
+    document.querySelector('#chapter-list li:nth-child(1)').click();   // chapter 1 reloaded
+  });
+  await p.waitForFunction(() => /b=a&c=1/.test(document.querySelector('audio').src)); await settle(p);
+  await p.evaluate(() => document.querySelector('audio').pause());
+  assert.equal((await where(p)).pos, '2 of 3', 'S5b: the count holds');
+  await p.click('#book-search-next'); await p.waitForFunction(() => /b=a&c=3/.test(document.querySelector('audio').src)); await settle(p);
+  assert.equal((await where(p)).pos, '3 of 3', 'S5b: Next goes on to chapter 3');
+  pass++;
+
   // S6 (All books): pick the Beta row.
   await p.focus('#book-search-input'); await settle(p);
   await p.check('#book-search-scope input[value=all]');
@@ -233,6 +253,147 @@ try {
   await typeQuery(lib, 'dragon');
   await lib.check('#book-search-scope input[value=all]');
   await lib.waitForFunction(() => document.querySelectorAll('#book-search-results:not([hidden]) .bs-row').length === 4, null, { timeout: 5000 });
+  slowB = 0; pass++;
+
+  // S12: re-init mid All-books search with Beta still in flight.
+  slowB = 1500;
+  const ri = await browser.newPage({ viewport: { width: 900, height: 900 } });
+  ri.on('pageerror', (e) => errors.push(e.message));
+  // Count live document pointerdown listeners, honouring removal and abort.
+  await ri.addInitScript(() => {
+    window.__pd = 0;
+    const add = EventTarget.prototype.addEventListener, rm = EventTarget.prototype.removeEventListener;
+    const live = new WeakMap();
+    EventTarget.prototype.addEventListener = function (type, fn, opt) {
+      if (this === document && type === 'pointerdown' && fn && !live.has(fn)) {
+        live.set(fn, true); window.__pd++;
+        opt?.signal?.addEventListener('abort', () => { if (live.delete(fn)) window.__pd--; });
+      }
+      return add.call(this, type, fn, opt);
+    };
+    EventTarget.prototype.removeEventListener = function (type, fn, opt) {
+      if (this === document && type === 'pointerdown' && live.delete(fn)) window.__pd--;
+      return rm.call(this, type, fn, opt);
+    };
+  });
+  await ri.goto(`${base}/#/a/2`); await ri.waitForSelector('.transcript-chunk');
+  await ri.evaluate(() => document.querySelector('audio')?.pause());
+  await typeQuery(ri, 'dragon');
+  await ri.check('#book-search-scope input[value=all]');
+  const pdBefore = await ri.evaluate(() => window.__pd);
+  await ri.evaluate(() => RepoStoryPlayer.init(window.__opts()));
+  await ri.waitForSelector('.transcript-chunk'); await settle(ri);
+  await ri.evaluate(() => document.querySelector('audio')?.pause());
+  await typeQuery(ri, 'dragon');
+  await ri.waitForSelector('#book-search-results .bs-row');
+  await new Promise((r) => setTimeout(r, 2200));              // Beta lands
+  // The new instance resumes wherever it resumes; what matters is that its
+  // This-book list was not replaced by the old instance's All-books one.
+  const after = await rows(ri);
+  assert.equal(after.length, 3, `S12: the new This-book list is untouched (${JSON.stringify(after)})`);
+  assert.ok(after.every((x) => x.book === ''), 'S12: no other-book rows from the old instance');
+  assert.equal(after.filter((x) => x.now).length, 1, 'S12: one Now playing row, the live one');
+  assert.ok(await ri.evaluate(() => window.__pd) <= pdBefore, 'S12: listeners do not pile up across re-inits');
+  slowB = 0;
+  // A row the old instance rendered — one into ANOTHER book, whose pick would
+  // open it and move the address — does nothing once that instance is gone.
+  const ro = await browser.newPage({ viewport: { width: 900, height: 900 } });
+  ro.on('pageerror', (e) => errors.push(e.message));
+  await ro.goto(`${base}/#/a/2`); await ro.waitForSelector('.transcript-chunk');
+  await ro.evaluate(() => document.querySelector('audio')?.pause());
+  await typeQuery(ro, 'dragon');
+  await ro.check('#book-search-scope input[value=all]');
+  await ro.waitForSelector('#book-search-results .bs-row-book');
+  await ro.evaluate(() => { window.__oldRow = document.querySelector('#book-search-results .bs-row-book').closest('.bs-row'); });
+  await ro.evaluate(() => RepoStoryPlayer.init(window.__opts()));
+  await ro.waitForSelector('.transcript-chunk'); await settle(ro);
+  const beforeClick = await ro.evaluate(() => [location.hash, document.querySelector('audio').src]);
+  await ro.evaluate(() => window.__oldRow.click()); await settle(ro);
+  assert.deepEqual(await ro.evaluate(() => [location.hash, document.querySelector('audio').src]), beforeClick,
+    'S12: a row the old instance rendered is inert');
+  slowB = 0; pass++;
+
+  // S13: This chapter, focused, no pick; chapter 1 plays through into chapter 2.
+  const adv = await browser.newPage({ viewport: { width: 900, height: 900 } });
+  adv.on('pageerror', (e) => errors.push(e.message));
+  await adv.goto(`${base}/#/a/1`); await adv.waitForSelector('.transcript-chunk');
+  await adv.waitForFunction(() => /c=1/.test(document.querySelector('audio')?.src ?? '') && document.querySelector('audio').readyState >= 1);
+  await adv.evaluate(() => document.querySelector('audio').pause());
+  await typeQuery(adv, 'dragon');
+  await adv.check('#book-search-scope input[value=chapter]');
+  await adv.focus('#book-search-input');
+  assert.deepEqual((await rows(adv)).map((x) => x.title), ['Chapter 1: Alpha 1']);
+  await adv.evaluate(() => { const a = document.querySelector('audio'); a.muted = true; a.currentTime = Math.max(0, (a.duration || 30) - 0.5); return a.play(); });
+  await adv.waitForFunction(() => /c=2/.test(document.querySelector('audio').src), null, { timeout: 10000 });
+  await adv.waitForFunction(() => document.querySelector('#book-search-results .bs-row-title')?.textContent === 'Chapter 2: Alpha 2', null, { timeout: 5000 });
+  assert.deepEqual((await rows(adv)).map((x) => [x.title, x.now]), [['Chapter 2: Alpha 2', true]], 'S13: the new chapter, labelled');
+  await adv.evaluate(() => document.querySelector('audio').pause());
+  await adv.press('#book-search-input', 'Enter'); await settle(adv);
+  w = await where(adv);
+  assert.ok(/c=2/.test(w.src) && w.current === 'tc-2-1', `S13: Enter stays in the new chapter (${w.current})`);
+  pass++;
+
+  // S13b: a jump pre-empted before its chapter registers leaves nothing stale.
+  // Pick the chapter-2 match, and in the same tick go back to chapter 1; then
+  // play chapter 1 through into chapter 2 with This chapter chosen.
+  await adv.click('#chapter-list li:nth-child(1)'); await settle(adv);
+  await adv.evaluate(() => document.querySelector('audio').pause());
+  await adv.check('#book-search-scope input[value=book]').catch(() => {});
+  await adv.focus('#book-search-input'); await typeQuery(adv, 'dragon');
+  await adv.check('#book-search-scope input[value=book]');
+  await adv.evaluate(() => {
+    const row = [...document.querySelectorAll('#book-search-results .bs-row')]
+      .find((r) => r.querySelector('.bs-row-title').textContent === 'Chapter 2: Alpha 2');
+    row.click();
+    document.querySelector('#chapter-list li:nth-child(1)').click();
+  });
+  await adv.waitForFunction(() => /c=1/.test(document.querySelector('audio').src)); await settle(adv);
+  await adv.evaluate(() => document.activeElement?.blur());
+  await adv.focus('#book-search-input');
+  await adv.check('#book-search-scope input[value=chapter]');
+  await adv.evaluate(() => { const a = document.querySelector('audio'); a.muted = true; a.currentTime = Math.max(0, (a.duration || 30) - 0.5); return a.play(); });
+  await adv.waitForFunction(() => /c=2/.test(document.querySelector('audio').src), null, { timeout: 10000 });
+  await adv.waitForFunction(() => document.querySelector('#book-search-results .bs-row-title')?.textContent === 'Chapter 2: Alpha 2', null, { timeout: 5000 });
+  pass++;
+
+  // S13c: a pick retained across a manual chapter change does not freeze the
+  // order. This book: pick the chapter-2 match, play chapter 1 by hand, reopen
+  // the list (the pick is kept), then let chapter 1 play into chapter 2.
+  await adv.evaluate(() => document.querySelector('#chapter-list li:nth-child(1)').click()); await settle(adv);
+  await adv.evaluate(() => document.querySelector('audio').pause());
+  await adv.check('#book-search-scope input[value=book]');
+  await adv.evaluate(() => [...document.querySelectorAll('#book-search-results .bs-row')]
+    .find((r) => r.querySelector('.bs-row-title').textContent === 'Chapter 2: Alpha 2').click());
+  await adv.waitForFunction(() => /c=2/.test(document.querySelector('audio').src)); await settle(adv);
+  await adv.evaluate(() => document.querySelector('audio').pause());
+  await adv.evaluate(() => document.querySelector('#chapter-list li:nth-child(1)').click());
+  await adv.waitForFunction(() => /c=1/.test(document.querySelector('audio').src)); await settle(adv);
+  await adv.evaluate(() => document.querySelector('audio').pause());
+  await adv.evaluate(() => document.activeElement?.blur());
+  await adv.focus('#book-search-input'); await settle(adv);
+  assert.equal((await rows(adv))[0].title, 'Chapter 1: Alpha 1', 'S13c: reopened from chapter 1');
+  await adv.evaluate(() => { const a = document.querySelector('audio'); a.muted = true; a.currentTime = Math.max(0, (a.duration || 30) - 0.5); return a.play(); });
+  await adv.waitForFunction(() => /c=2/.test(document.querySelector('audio').src), null, { timeout: 10000 });
+  await adv.waitForFunction(() => document.querySelector('#book-search-results .bs-row-title')?.textContent === 'Chapter 2: Alpha 2', null, { timeout: 5000 });
+  assert.deepEqual((await rows(adv)).map((x) => x.now), [true, false, false], 'S13c: re-ordered from the chapter playing into');
+  pass++;
+
+  // S14: pick before Beta lands; the list stays closed and Beta joins the bar.
+  slowB = 1500;
+  const late = await browser.newPage({ viewport: { width: 900, height: 900 } });
+  late.on('pageerror', (e) => errors.push(e.message));
+  await late.goto(`${base}/#/a/2`); await late.waitForSelector('.transcript-chunk');
+  await late.waitForFunction(() => /c=2/.test(document.querySelector('audio')?.src ?? ''));
+  await late.evaluate(() => { const a = document.querySelector('audio'); a.pause(); a.currentTime = 0; });
+  await typeQuery(late, 'dragon');
+  await late.check('#book-search-scope input[value=all]');
+  await late.press('#book-search-input', 'Enter'); await settle(late);
+  assert.equal((await where(late)).pos, '1 of 3');
+  await late.waitForFunction(() => document.querySelector('#book-search-pos').textContent === '1 of 4', null, { timeout: 5000 });
+  assert.ok(await late.isHidden('#book-search-results'), 'S14: the list stays closed');
+  for (let i = 0; i < 3; i++) { await late.click('#book-search-next'); await settle(late); }
+  await late.waitForFunction(() => /b=b&c=2/.test(document.querySelector('audio').src), null, { timeout: 5000 });
+  assert.equal((await where(late)).pos, '4 of 4', 'S14: Next reaches the late book');
   slowB = 0; pass++;
 
   // S10: a reader in summary mode; Alpha has no summaries, Beta opens in summary.

@@ -71,32 +71,56 @@ export class BookSearch {
    *  place. One function for the instance, so the loader's waiter set holds it
    *  once however many keystrokes ask during a slow fetch. */
   private readonly onTranscript = (): void => {
-    if (this.query.length >= MIN_QUERY && (this.at < 0 || !this.el.results.hidden)) this.refresh();
+    if (this.disposed || this.query.length < MIN_QUERY) return;
+    // Picked: the newcomer joins navigation in the order the stepping started
+    // from, and a closed list stays closed. Not picked: re-listed from here.
+    this.refresh({ reorigin: this.at < 0, show: this.at < 0 || !this.el.results.hidden });
   };
+  /** Every listener this instance adds, so dispose() removes them in one go. */
+  private readonly ac = new AbortController();
+  private disposed = false;
 
   constructor(host: BookSearchHost, el: BookSearchEls) {
     this.host = host;
     this.el = el;
-    el.input.addEventListener('input', () => this.run(el.input.value));
+    const signal = this.ac.signal;
+    el.input.addEventListener('input', () => this.run(el.input.value), { signal });
     el.input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); this.jumpFromHere(); }
       if (e.key === 'Escape') { e.preventDefault(); this.reset(); el.input.blur(); }
-    });
-    el.input.addEventListener('focus', () => { if (this.query.length >= MIN_QUERY) this.showList(); });
+    }, { signal });
+    el.input.addEventListener('focus', () => { if (this.query.length >= MIN_QUERY) this.showList(); }, { signal });
     el.scope.addEventListener('change', (e) => {
       const v = (e.target as HTMLInputElement).value as Scope;
       if (v !== 'chapter' && v !== 'book' && v !== 'all') return;
       this.scope = v;
       this.run(this.el.input.value);
-    });
-    el.prev.addEventListener('click', () => this.step(-1));
-    el.next.addEventListener('click', () => this.step(1));
-    el.close.addEventListener('click', () => this.reset());
+    }, { signal });
+    el.prev.addEventListener('click', () => this.step(-1), { signal });
+    el.next.addEventListener('click', () => this.step(1), { signal });
+    el.close.addEventListener('click', () => this.reset(), { signal });
     // A tap elsewhere closes the list; the bar stays until closed.
     document.addEventListener('pointerdown', (e) => {
       const t = e.target as Node | null;
       if (!el.results.hidden && t && !el.results.contains(t) && t !== el.input) el.results.hidden = true;
-    });
+    }, { signal });
+  }
+
+  /** The engine is being replaced (re-init): drop every listener, and make any
+   *  transcript callback still queued in the shared loader a no-op. */
+  dispose(): void {
+    this.disposed = true;
+    this.ac.abort();
+  }
+
+  /** The engine loaded another chapter. `bySearch`: the load is the one a jump
+   *  of ours caused (the engine numbers loads, so a pre-empted jump or a later
+   *  manual or natural change cannot pass for one) — stepping put playback
+   *  there and the order stays. Otherwise playback moved on, or the reader
+   *  moved it, and an active search re-scopes and re-orders from there. */
+  chapterChanged(bySearch: boolean): void {
+    if (this.disposed || bySearch || this.query.length < MIN_QUERY) return;
+    this.refresh({ reorigin: true, show: !this.el.results.hidden });
   }
 
   /** Clear everything: the box, the list, the bar and the marks. The scope is
@@ -186,12 +210,13 @@ export class BookSearch {
 
   /** Every match in the scope, in list order: the chapter playing, the rest of
    *  this book in book order, then (All books) the others in library order. */
-  private collect(): void {
+  private collect(reorigin = true): void {
     this.hits = [];
-    const book = this.host.book();
-    if (!book || this.query.length < MIN_QUERY) { this.origin = null; return; }
-    const ci = this.host.currentChapterIdx();
-    this.origin = { slug: book.slug, idx: ci };
+    const open = this.host.book();
+    if (!open || this.query.length < MIN_QUERY) { this.origin = null; return; }
+    if (reorigin || !this.origin) this.origin = { slug: open.slug, idx: this.host.currentChapterIdx() };
+    const { slug: os, idx: ci } = this.origin;
+    const book = os === open.slug ? open : this.host.books().find((b) => b.slug === os) ?? open;
     const others = this.scope === 'all' ? this.host.books().filter((b) => b.slug !== book.slug) : [];
     for (const [rank, b] of [book, ...others].entries()) {
       const bt = this.host.transcriptFor(b.slug);
@@ -264,7 +289,7 @@ export class BookSearch {
       snip.className = 'bs-row-snippet';
       this.markInto(snip, hs[0].m.snippet);
       row.append(snip);
-      row.addEventListener('click', () => this.go(this.hits.indexOf(hs[0])));
+      row.addEventListener('click', () => this.go(this.hits.indexOf(hs[0])), { signal: this.ac.signal });
       box.append(row);
     }
     this.el.results.hidden = false;
@@ -289,16 +314,16 @@ export class BookSearch {
     if (this.query.length < MIN_QUERY) return;
     // Reopened after a pick: the list is ordered from where playback is now.
     if (this.at >= 0 || this.origin?.idx !== this.host.currentChapterIdx()
-        || this.origin?.slug !== this.host.book()?.slug) this.refresh();
+        || this.origin?.slug !== this.host.book()?.slug) this.refresh({ reorigin: true, show: true });
     this.el.results.hidden = false;
   }
 
   /** Re-collect and re-list, keeping a picked match picked: its index and the
    *  bar's "k of N" follow it into the new order. */
-  private refresh(): void {
+  private refresh({ reorigin, show }: { reorigin: boolean; show: boolean }): void {
     const keep = this.at >= 0 ? this.hits[this.at] : null;
     this.syncScopeOptions();
-    this.collect();
+    this.collect(reorigin);
     if (keep) {
       this.at = this.hits.findIndex((h) => h.slug === keep.slug && h.idx === keep.idx
         && h.m.chunkIndex === keep.m.chunkIndex);
@@ -306,6 +331,7 @@ export class BookSearch {
       else this.el.nav.hidden = true;
     }
     this.renderList();
+    if (!show) this.el.results.hidden = true;
   }
 
   /** Enter: the first match in the chapter playing at or after where playback
@@ -327,7 +353,7 @@ export class BookSearch {
 
   private go(i: number): void {
     const h = this.hits[i];
-    if (!h) return;
+    if (!h || this.disposed) return;
     this.at = i;
     this.el.results.hidden = true;
     this.el.pos.textContent = `${i + 1} of ${this.hits.length}`;

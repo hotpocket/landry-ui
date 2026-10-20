@@ -185,6 +185,12 @@ export class PlayerEngine {
   private bookSearch: BookSearch | null = null;
   /** Set while book search opens another book at a match. */
   private searchOpening = false;
+  /** Every chapter load is numbered; book search's own jump records the number
+   *  of the load it caused, so a later chapter change knows whether search put
+   *  playback there or something else did (the reader, or playback moving on). */
+  private chapterLoads = 0;
+  private searchLoad = -1;
+  private lastLoadKey = '';
   private userScrolledChapters = false;
 
   private chapterLis: HTMLLIElement[] = [];
@@ -282,6 +288,7 @@ export class PlayerEngine {
    */
   private dispose(): void {
     this.disposed = true;          // stops the rAF loop at its next frame
+    this.bookSearch?.dispose();
     // Document-level listeners outlive this engine's DOM by construction; a
     // successor with its own menu would otherwise be closed by the dead one's.
     this.closeChapterMenu(false);
@@ -501,6 +508,11 @@ export class PlayerEngine {
   private loadChapter(idx: number, timeInChapter: number, autoplay: boolean, bust = false): void {
     if (!this.currentBook) return;
     if (idx < 0 || idx >= this.currentBook.chapters.length) return;
+    // Counted only when the chapter itself changes: a same-chapter reload
+    // (retry, stall recovery, a refreshed download) is not playback moving on,
+    // and must not take a search jump's ownership away from it.
+    const key = `${this.currentBookIdx}:${idx}`;
+    if (key !== this.lastLoadKey) { this.chapterLoads++; this.lastLoadKey = key; }
     // Leaving a chapter is a position worth keeping, and it is the LAST moment
     // it exists: the element's clock resets the instant a new src lands. The
     // book guard is what keeps the outgoing book's offset off the incoming
@@ -1637,6 +1649,7 @@ export class PlayerEngine {
       if (title) title.textContent = ch.title ?? '';
       const now = this.refs.bookSearchNow.current;
       if (now) now.textContent = `Now playing: ${ch.title ?? `Chapter ${ch.id + 1}`}`;
+      this.bookSearch?.chapterChanged(this.searchLoad === this.chapterLoads);
       this.setReadingChapterLabel(ch);
       this.lastActiveChapterId = ch.id;
       this.lastActiveChunkId = null;
@@ -2062,7 +2075,9 @@ export class PlayerEngine {
     } else {
       const bt = Math.max(0, Math.min(p.bookTime || 0, this.bookDur()));
       const startIdx = chapterIdx ?? findChapterIdxAt(this.currentBook, bt, this.summaryMode);
-      const offset = chapterIdx == null ? bt - this.chStart(this.currentBook.chapters[startIdx]) : 0;
+      const first = this.currentBook.chapters[startIdx];
+      // A book with no chapters has nothing to offset into (release review).
+      const offset = chapterIdx == null && first ? bt - this.chStart(first) : 0;
       this.loadChapter(startIdx, offset, false);
     }
 
@@ -2237,7 +2252,7 @@ export class PlayerEngine {
         jump: (slug, idx, t) => {
           const bi = bookIdxFromSlug(this.books, slug);
           if (bi < 0) return;
-          if (bi === this.currentBookIdx) { this.jumpTo(idx, t); return; }
+          if (bi === this.currentBookIdx) { this.jumpTo(idx, t); this.searchLoad = this.chapterLoads; return; }
           // Another book: open it, then load the chapter AT the match. Opening
           // already loads a chapter at its own offset, and a seek issued before
           // that media is ready is overwritten by it — so the load carries t,
@@ -2248,6 +2263,7 @@ export class PlayerEngine {
           this.setFollow(true, false);
           this.lastActiveChunkId = null;
           this.loadChapter(idx, t, playing);
+          this.searchLoad = this.chapterLoads;
         },
         chunks: () => this.refs.transcriptChunks.current,
       }, {

@@ -28,6 +28,9 @@ export interface TranscriptSource {
 export class TranscriptLoader {
   private src: TranscriptSource;
   private inFlight = new Map<string, Promise<void>>();
+  /** Everyone waiting on a fetch: the library search and the book search share
+   *  this loader, and whichever asked second must hear when it lands too. */
+  private waiters = new Map<string, Set<() => void>>();
   private failed = new Set<string>();
   private onProgress: (loading: string[]) => void;
 
@@ -49,7 +52,9 @@ export class TranscriptLoader {
    */
   ensure(slugs: string[], onEach: () => void): void {
     for (const slug of slugs) {
-      if (this.src.loaded[slug] || this.inFlight.has(slug) || this.failed.has(slug)) continue;
+      if (this.src.loaded[slug] || this.failed.has(slug)) continue;
+      if (this.inFlight.has(slug)) { this.waiters.get(slug)?.add(onEach); continue; }
+      this.waiters.set(slug, new Set([onEach]));
       const url = this.src.urlFor(slug);
       if (!url) { this.failed.add(slug); continue; }
 
@@ -76,8 +81,10 @@ export class TranscriptLoader {
         .catch(() => { this.failed.add(slug); })
         .finally(() => {
           this.inFlight.delete(slug);
+          const waiting = this.waiters.get(slug) ?? new Set();
+          this.waiters.delete(slug);
           this.onProgress(this.loading());
-          onEach();
+          for (const f of waiting) f();
         });
 
       this.inFlight.set(slug, p);

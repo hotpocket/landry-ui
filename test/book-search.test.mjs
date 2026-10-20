@@ -16,6 +16,11 @@
 //   G. typing a query fetches no audio
 //   H. the box is hidden in reading mode
 //   I. Enter jumps to the first match at or after the playback position
+//   J. exactly one passage is marked as playing, also after a jump within the
+//      chapter (a jump used to leave the previous passage blue as well)
+//   K. passages holding a match carry a dashed outline and a faint tint that is
+//      not the playing passage's blue; close removes them
+//   L. the marks are a bright orange-yellow
 
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -77,6 +82,8 @@ const where = (page) => page.evaluate(() => {
     currentChunk: cur?.closest('.transcript-chunk')?.id ?? null,
     currentInView: !!r && r.top >= b.top - 1 && r.bottom <= b.bottom + 1,
     pos: document.querySelector('#book-search-pos')?.textContent ?? '',
+    active: [...box.querySelectorAll('.transcript-chunk.active')].map((c) => c.id),
+    matched: [...box.querySelectorAll('.transcript-chunk.bs-match')].map((c) => c.id),
     barShown: !!document.querySelector('#book-search-nav') && !document.querySelector('#book-search-nav').hidden,
   };
 });
@@ -130,6 +137,32 @@ try {
   assert.ok(await page.isHidden('#book-search-results'), 'C: the list closes on a pick');
   if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.SCREENSHOT_DIR, 'search-picked.png') });
   pass++;
+
+  // K
+  assert.deepEqual(w.matched, ['tc-3-2', 'tc-3-8'], 'K: the passages holding a match, and only those');
+  const look = await page.evaluate(() => {
+    const st = (id) => getComputedStyle(document.getElementById(id));
+    const plain = st('tc-3-5'), match = st('tc-3-8'), playing = st('tc-3-2');
+    return { plainBg: plain.backgroundColor, matchBg: match.backgroundColor, matchLine: match.outlineStyle,
+             playingBg: playing.backgroundColor, playingLine: playing.outlineStyle };
+  });
+  assert.equal(look.matchLine, 'dashed', 'K: a match passage has a dashed outline');
+  assert.notEqual(look.matchBg, look.plainBg, 'K: and a background change');
+  assert.notEqual(look.matchBg, look.playingBg, 'K: which is not the playing blue');
+  const alpha = (c) => +(/rgba\([^)]*,\s*([\d.]+)\)/.exec(c)?.[1] ?? 1);
+  assert.ok(alpha(look.matchBg) <= 0.1, `K: the tint is very slight (${look.matchBg})`);
+  assert.equal(look.playingBg, 'rgb(26, 42, 58)', 'K: the playing passage keeps its solid blue when it also matches');
+  pass++;
+
+  // L
+  const markBg = await page.evaluate(() => [...document.querySelectorAll('mark.bs-hit')]
+    .map((m) => [getComputedStyle(m).backgroundColor, m.classList.contains('bs-current')]));
+  for (const [bg, current] of markBg) {
+    const [r, g, b, a = 1] = /rgba?\(([^)]*)\)/.exec(bg)[1].split(',').map(Number);
+    assert.ok(r >= 240 && g >= 160 && g <= 215 && b <= 80, `L: orange-yellow, not muddy (${bg})`);
+    assert.ok(a >= (current ? 0.9 : 0.7), `L: bright enough (${bg}, current ${current})`);
+  }
+  pass++;
   // E
   assert.equal(w.paused, true, 'E: a paused player stays paused'); pass++;
 
@@ -137,6 +170,7 @@ try {
   await page.click('#book-search-next'); await settle(page);
   w = await where(page);
   assert.equal(w.currentChunk, 'tc-3-8'); assert.equal(w.pos, '3 of 3'); assert.ok(Math.abs(w.t - 24) < 0.3, `D: t ${w.t}`);
+  assert.deepEqual(w.active, ['tc-3-8'], 'J: one playing passage after a jump within the chapter');
   await page.click('#book-search-next');
   await page.waitForFunction(() => /c=1/.test(document.querySelector('audio').src)); await settle(page);
   w = await where(page);
@@ -153,6 +187,7 @@ try {
   w = await where(page);
   assert.equal(w.barShown, false, 'F: the bar is gone');
   assert.deepEqual(w.marks, [], 'F: the marks are gone');
+  assert.deepEqual(w.matched, [], 'F: the match outlines are gone');
   assert.equal(await page.inputValue('#book-search-input'), '', 'F: the box is emptied');
   const texts = await page.$$eval('#transcript-chunks .chunk-text', (els) => els.map((e) => e.textContent));
   assert.deepEqual(texts, transcripts.books[0].chapters[2].chunks.map((c) => c.text), 'F: transcript text unchanged');
@@ -163,7 +198,8 @@ try {
   await page.fill('#book-search-input', 'dragon');
   await page.press('#book-search-input', 'Enter'); await settle(page);
   w = await where(page);
-  assert.equal(w.currentChunk, 'tc-3-2', 'I: Enter takes the next match from where playback is'); assert.equal(w.pos, '2 of 3');
+  // "1 of 3": the chapter playing lists first (docs/spec-book-search.md, 2026-10-20).
+  assert.equal(w.currentChunk, 'tc-3-2', 'I: Enter takes the next match from where playback is'); assert.equal(w.pos, '1 of 3');
   pass++;
 
   // H

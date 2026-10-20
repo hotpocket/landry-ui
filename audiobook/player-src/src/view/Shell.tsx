@@ -183,8 +183,8 @@ export function Shell({ title, hideBackButton, hideNowPlaying, refs }: ShellProp
           <div class="book-search-results" id="book-search-results" ref={refs.bookSearchResults} hidden>
             <div class="bs-scope" id="book-search-scope" role="radiogroup" aria-label="Search in"
               ref={refs.bookSearchScope}>
-              <label class="bs-scope-opt"><input type="radio" name="bs-scope" value="chapter" /> This chapter</label>
-              <label class="bs-scope-opt"><input type="radio" name="bs-scope" value="book" checked /> This book</label>
+              <label class="bs-scope-opt"><input type="radio" name="bs-scope" value="chapter" checked /> This chapter</label>
+              <label class="bs-scope-opt"><input type="radio" name="bs-scope" value="book" /> This book</label>
               <label class="bs-scope-opt"><input type="radio" name="bs-scope" value="all" /> All books</label>
             </div>
             <div class="bs-list" id="book-search-list" ref={refs.bookSearchList} />

@@ -128,8 +128,10 @@ try {
   await typeQuery(p, 'dragon');
   await p.waitForSelector('#book-search-results .bs-row');
   assert.deepEqual((await scopes(p)).map((s) => [s.value, s.label, s.checked]),
-    [['chapter', 'This chapter', false], ['book', 'This book', true], ['all', 'All books', false]],
-    'S1: three scopes, This book chosen'); pass++;
+    [['chapter', 'This chapter', true], ['book', 'This book', false], ['all', 'All books', false]],
+    'S1: three scopes, This chapter chosen'); pass++;
+  assert.deepEqual((await rows(p)).map((x) => x.title), ['Chapter 2: Alpha 2'], 'S1: the default searches the chapter playing');
+  await p.check('#book-search-scope input[value=book]'); await settle(p);
 
   // S2
   let r = await rows(p);
@@ -285,6 +287,7 @@ try {
   await ri.waitForSelector('.transcript-chunk'); await settle(ri);
   await ri.evaluate(() => document.querySelector('audio')?.pause());
   await typeQuery(ri, 'dragon');
+  await ri.check('#book-search-scope input[value=book]');
   await ri.waitForSelector('#book-search-results .bs-row');
   await new Promise((r) => setTimeout(r, 2200));              // Beta lands
   // The new instance resumes wherever it resumes; what matters is that its

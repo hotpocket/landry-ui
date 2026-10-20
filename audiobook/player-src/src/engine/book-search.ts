@@ -63,7 +63,10 @@ export class BookSearch {
   private query = '';
   private hits: Hit[] = [];
   private at = -1;
-  private scope: Scope = 'book';
+  private scope: Scope = 'chapter';
+  /** Whether the reader picked a scope. Until they do, the default follows
+   *  what is available: This chapter once a chapter is loaded, else This book. */
+  private chosen = false;
   /** Where the list was ordered from: the book and chapter playing when it ran. */
   private origin: { slug: string; idx: number } | null = null;
   /** As each other book's transcript lands: re-list if the list is up or
@@ -94,6 +97,7 @@ export class BookSearch {
       const v = (e.target as HTMLInputElement).value as Scope;
       if (v !== 'chapter' && v !== 'book' && v !== 'all') return;
       this.scope = v;
+      this.chosen = true;
       this.run(this.el.input.value);
     }, { signal });
     el.prev.addEventListener('click', () => this.step(-1), { signal });
@@ -130,7 +134,7 @@ export class BookSearch {
     this.hits = [];
     this.at = -1;
     this.origin = null;
-    if (scopeToo) this.setScope('book');
+    if (scopeToo) { this.chosen = false; this.setScope('chapter'); }
     this.el.input.value = '';
     this.el.results.hidden = true;
     this.el.list.replaceChildren();
@@ -188,10 +192,12 @@ export class BookSearch {
 
   /** "This chapter" is offered only while a chapter is loaded. */
   private syncScopeOptions(): void {
-    const has = this.host.currentChapterIdx() >= 0;
+    // A loaded chapter, not just a non-negative index: an empty book has none.
+    const has = !!this.host.book()?.chapters[this.host.currentChapterIdx()];
     const opt = this.el.scope.querySelector('input[value=chapter]')?.closest('label') as HTMLElement | null;
     if (opt) opt.hidden = !has;
     if (!has && this.scope === 'chapter') this.setScope('book');
+    else if (has && !this.chosen && this.scope !== 'chapter') this.setScope('chapter');
   }
 
   private run(raw: string): void {

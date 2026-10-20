@@ -108,6 +108,9 @@ try {
   await page.fill('#book-search-input', 'dr');
   await page.fill('#book-search-input', 'dragon');
   await page.waitForSelector('#book-search-results .bs-row');
+  // This chapter is the default (docs/spec-book-search.md); this suite is
+  // about the whole book.
+  await page.check('#book-search-scope input[value=book]'); await settle(page);
   const r = await rows(page);
   assert.deepEqual(r.map((x) => x.title), ['Chapter 1: Title 1', 'Chapter 3: Title 3'], 'A: only matching chapters, in order');
   assert.deepEqual(r.map((x) => x.count), ['1 match', '2 matches'], 'A: passage counts');

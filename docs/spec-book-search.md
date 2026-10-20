@@ -23,7 +23,8 @@ while results cover the chapter list.
   chapter, nor in reading mode (which has its own chapter label).
 - **Scope** — three radio options at the top of the results list: This chapter,
   This book, All books. "This chapter" is offered only while a chapter is
-  loaded. Default: This book (what search did before). The choice holds until
+  loaded. Default: This chapter (Brandon, 2026-10-20), or This book while no
+  chapter is loaded. The choice holds until
   the book is closed.
 - **Results list** — opens under the box while typing. One row per chapter that
   matches, in this order: the chapter playing first, then the book's other

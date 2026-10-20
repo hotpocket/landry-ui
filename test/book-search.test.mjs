@@ -198,7 +198,8 @@ try {
   await page.fill('#book-search-input', 'dragon');
   await page.press('#book-search-input', 'Enter'); await settle(page);
   w = await where(page);
-  assert.equal(w.currentChunk, 'tc-3-2', 'I: Enter takes the next match from where playback is'); assert.equal(w.pos, '2 of 3');
+  // "1 of 3": the chapter playing lists first (docs/spec-book-search.md, 2026-10-20).
+  assert.equal(w.currentChunk, 'tc-3-2', 'I: Enter takes the next match from where playback is'); assert.equal(w.pos, '1 of 3');
   pass++;
 
   // H

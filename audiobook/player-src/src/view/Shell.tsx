@@ -75,6 +75,9 @@ export interface ShellRefs {
   bookSearchPrev: RefObject<HTMLButtonElement>;
   bookSearchNext: RefObject<HTMLButtonElement>;
   bookSearchClose: RefObject<HTMLButtonElement>;
+  bookSearchNow: RefObject<HTMLDivElement>;
+  bookSearchScope: RefObject<HTMLDivElement>;
+  bookSearchList: RefObject<HTMLDivElement>;
 }
 
 export function Shell({ title, hideBackButton, hideNowPlaying, refs }: ShellProps) {
@@ -172,7 +175,20 @@ export function Shell({ title, hideBackButton, hideNowPlaying, refs }: ShellProp
               </button>
             </span>
           </div>
-          <div class="book-search-results" id="book-search-results" ref={refs.bookSearchResults} hidden />
+          {/* Above where the results drop, so the chapter playing stays
+              readable while they cover the chapter list. Only where the
+              header above does not already name it. */}
+          <div class="book-search-now" id="book-search-now" ref={refs.bookSearchNow}
+            style={hideNowPlaying ? undefined : 'display:none'} />
+          <div class="book-search-results" id="book-search-results" ref={refs.bookSearchResults} hidden>
+            <div class="bs-scope" id="book-search-scope" role="radiogroup" aria-label="Search in"
+              ref={refs.bookSearchScope}>
+              <label class="bs-scope-opt"><input type="radio" name="bs-scope" value="chapter" /> This chapter</label>
+              <label class="bs-scope-opt"><input type="radio" name="bs-scope" value="book" checked /> This book</label>
+              <label class="bs-scope-opt"><input type="radio" name="bs-scope" value="all" /> All books</label>
+            </div>
+            <div class="bs-list" id="book-search-list" ref={refs.bookSearchList} />
+          </div>
         </div>
         <div class="content-area" ref={refs.contentArea}>
           <div class="chapter-panel" style="flex: 0 0 50%" ref={refs.chapterPanel}>

@@ -183,6 +183,8 @@ export class PlayerEngine {
    *  smooth scroll still in flight is not mistaken for one out of view. */
   private followedEl: Element | null = null;
   private bookSearch: BookSearch | null = null;
+  /** Set while book search opens another book at a match. */
+  private searchOpening = false;
   private userScrolledChapters = false;
 
   private chapterLis: HTMLLIElement[] = [];
@@ -1633,6 +1635,8 @@ export class PlayerEngine {
       this.chapterLis[ch.id]?.classList.add('active');
       const title = this.refs.chapterTitle.current;
       if (title) title.textContent = ch.title ?? '';
+      const now = this.refs.bookSearchNow.current;
+      if (now) now.textContent = `Now playing: ${ch.title ?? `Chapter ${ch.id + 1}`}`;
       this.setReadingChapterLabel(ch);
       this.lastActiveChapterId = ch.id;
       this.lastActiveChunkId = null;
@@ -1987,12 +1991,22 @@ export class PlayerEngine {
     history.replaceState(null, '', target || location.pathname + location.search);
   }
 
+  /** The mode a book opens in: its own last mode, else the reader's. */
+  private opensInSummary(idx: number): boolean {
+    const b = this.books[idx];
+    if (!bookHasSummaries(b)) return false;
+    const p = readProgress(this.store, this.bookKey(idx));
+    return p.summary !== undefined ? !!p.summary : this.store.getItem('rs-summary') === '1';
+  }
+
   openBook(idx: number, updateUrl = true, chapterIdx: number | null = null): void {
     // Before anything is retargeted: the book being left has a position, and
     // after the next line there is no way to say whose it was.
     if (this.currentBookIdx !== null && this.currentBookIdx !== idx) this.remotePut();
     this.hideOffer();
-    if (this.currentBookIdx !== idx) this.bookSearch?.reset();
+    // A search that opens another book keeps its bar and scope; closing or
+    // switching books any other way starts search over.
+    if (this.currentBookIdx !== idx && !this.searchOpening) this.bookSearch?.reset(true);
     this.currentBook = this.books[idx];
     this.currentBookIdx = idx;
     this.lastActiveChapterId = null;
@@ -2014,8 +2028,7 @@ export class PlayerEngine {
     const toggle = this.refs.modeToggle.current;
     if (toggle) toggle.style.display = hasSummaries ? '' : 'none';
     const p = readProgress(this.store, this.bookKey(idx));
-    this.summaryMode = hasSummaries &&
-      (p.summary !== undefined ? !!p.summary : this.store.getItem('rs-summary') === '1');
+    this.summaryMode = this.opensInSummary(idx);
     this.refs.modeFull.current?.classList.toggle('on', !this.summaryMode);
     this.refs.modeSummary.current?.classList.toggle('on', this.summaryMode);
 
@@ -2194,21 +2207,52 @@ export class PlayerEngine {
     r.resumeOfferGo.current?.addEventListener('click', () => this.acceptOffer());
     r.resumeOfferNo.current?.addEventListener('click', () => this.declineOffer());
     if (r.bookSearchInput.current && r.bookSearchResults.current && r.bookSearchNav.current && r.bookSearchPos.current
-      && r.bookSearchPrev.current && r.bookSearchNext.current && r.bookSearchClose.current) {
+      && r.bookSearchPrev.current && r.bookSearchNext.current && r.bookSearchClose.current
+      && r.bookSearchScope.current && r.bookSearchList.current) {
+      const info = (b: Book) => ({ slug: bookSlug(b), title: b.title, chapters: b.chapters });
+      const transcriptFor = (slug: string) => {
+        if (this.currentBook && bookSlug(this.currentBook) === slug) {
+          return bookTranscript(this.transcriptData, this.currentBook) ?? this.transcriptsBySlug[slug] ?? null;
+        }
+        return this.transcriptsBySlug[slug] ?? null;
+      };
       this.bookSearch = new BookSearch({
-        book: () => this.currentBook,
-        transcript: () => (this.currentBook ? bookTranscript(this.transcriptData, this.currentBook) : null),
-        summary: () => this.summaryMode,
-        chapterIdxFor: (ti) => {
-          const bt = this.currentBook ? bookTranscript(this.transcriptData, this.currentBook) : null;
-          return this.currentBook?.chapters.findIndex((c) => chapterTranscript(bt, c)?.index === ti) ?? -1;
+        book: () => (this.currentBook ? info(this.currentBook) : null),
+        books: () => this.books.map(info),
+        transcriptFor,
+        ensureTranscripts: (slugs, onEach) => this.loader?.ensure(slugs, onEach),
+        loading: () => (this.loader?.loading().length ?? 0) > 0,
+        summaryFor: (slug) => {
+          if (this.currentBook && bookSlug(this.currentBook) === slug) return this.summaryMode;
+          const bi = bookIdxFromSlug(this.books, slug);
+          return bi >= 0 && this.opensInSummary(bi);
+        },
+        chapterIdxIn: (slug, ti) => {
+          const b = this.books[bookIdxFromSlug(this.books, slug)];
+          const bt = transcriptFor(slug);
+          return b?.chapters.findIndex((c) => chapterTranscript(bt, c)?.index === ti) ?? -1;
         },
         currentChapterIdx: () => this.currentChapterIdx,
         currentTime: () => this.audio.currentTime || 0,
-        jump: (idx, t) => this.jumpTo(idx, t),
+        jump: (slug, idx, t) => {
+          const bi = bookIdxFromSlug(this.books, slug);
+          if (bi < 0) return;
+          if (bi === this.currentBookIdx) { this.jumpTo(idx, t); return; }
+          // Another book: open it, then load the chapter AT the match. Opening
+          // already loads a chapter at its own offset, and a seek issued before
+          // that media is ready is overwritten by it — so the load carries t,
+          // as the library search's goTo does.
+          const playing = !this.audio.paused;
+          this.searchOpening = true;
+          try { this.openBook(bi, true, idx); } finally { this.searchOpening = false; }
+          this.setFollow(true, false);
+          this.lastActiveChunkId = null;
+          this.loadChapter(idx, t, playing);
+        },
         chunks: () => this.refs.transcriptChunks.current,
       }, {
-        input: r.bookSearchInput.current, results: r.bookSearchResults.current, nav: r.bookSearchNav.current,
+        input: r.bookSearchInput.current, results: r.bookSearchResults.current,
+        scope: r.bookSearchScope.current, list: r.bookSearchList.current, nav: r.bookSearchNav.current,
         pos: r.bookSearchPos.current, prev: r.bookSearchPrev.current, next: r.bookSearchNext.current,
         close: r.bookSearchClose.current,
       });

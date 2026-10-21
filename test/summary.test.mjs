@@ -81,7 +81,9 @@ const pos = await page.evaluate(() => {
   const textRight = range.getBoundingClientRect().right;  // end of the label TEXT, not the flexed box
   const tg = document.querySelector('#mode-toggle').getBoundingClientRect();
   const dec = document.querySelector('#ts-dec').getBoundingClientRect();
-  return { gap: tg.left - textRight, beforeDec: tg.right <= dec.left };
+  // Before A− in reading order: left of it on a shared row, or on a row above
+  // when the controls wrap whole to their own (transcript-header-wrap).
+  return { gap: tg.left - textRight, beforeDec: tg.right <= dec.left || tg.bottom <= dec.top };
 });
 check(pos.gap >= 0 && pos.gap < 40 && pos.beforeDec,
   `A4: toggle sits just after the TRANSCRIPT label (gap ${pos.gap.toFixed(0)}px)`);

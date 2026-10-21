@@ -47,11 +47,16 @@
 //      progress reads as none — iOS Safari with "Block All Cookies" throws
 //   T. safeStore survives a storage GETTER that throws, which is the shape
 //      that blanked books.landry.bot on iOS: naming the identifier is the throw
+//   U. a launch resumes the newest place the reader was, on this device or
+//      any other — the book, not only the position within it
+//   V. a book that has left the library is skipped, not resumed as a 404
+//   W. a remote stamp that will not parse is ignored; a local record with no
+//      stamp loses to any remote one (same rule as the in-book offer)
 
 import assert from 'node:assert';
 import { test } from 'node:test';
 import {
-  readProgress, writeProgress, readLastBookId, clearLastBook,
+  readProgress, writeProgress, readLastBookId, resumeBookId,
   migrateLegacyProgress, safeStore, ZERO,
 } from '../audiobook/player-src/src/core/progress.ts';
 import { bookId } from '../audiobook/player-src/src/core/routing.ts';
@@ -117,11 +122,8 @@ test('F2. last book is null when nothing has been opened', () => {
   assert.equal(readLastBookId(fakeStore()), null);
 });
 
-test('F3. clearing the last book reads back as none', () => {
-  const s = fakeStore();
-  writeProgress(s, 'beta', snap(1, { duration: 10 }));
-  clearLastBook(s);
-  assert.equal(readLastBookId(s), null);
+test('F3. a stored empty id (written by older builds on the way home) reads as none', () => {
+  assert.equal(readLastBookId(fakeStore({ 'rs-last-book-id': '' })), null);
 });
 
 test('G. progress is a clamped fraction and never NaN', () => {
@@ -293,7 +295,7 @@ test('S. a store that throws from every accessor takes nothing down', () => {
   const s = hostileStore();
   assert.doesNotThrow(() => migrateLegacyProgress(s, ['A', 'B']));
   assert.doesNotThrow(() => writeProgress(s, 'A', snap(10)));
-  assert.doesNotThrow(() => clearLastBook(s));
+  assert.doesNotThrow(() => resumeBookId(s, [{ bookId: 'A', updatedAt: '2026-01-01T00:00:00Z' }]));
   assert.deepEqual(readProgress(s, 'A'), ZERO, 'progress reads as none');
   assert.equal(readLastBookId(s), null, 'and nothing resumes');
 });
@@ -343,4 +345,61 @@ test('U3. the default clock is the real one, in ISO — the host passes none', (
   const at = Date.parse(readProgress(s, 'alpha').savedAt);
   assert.ok(at >= before - 1000 && at <= Date.now() + 1000,
     'a stamp nobody can parse is a stamp no comparison can use');
+});
+
+// --- U, V, W: which book a launch opens ------------------------------------
+
+const at = (iso) => () => iso;
+const remote = (bookId, updatedAt) => ({ bookId, chapterN: 1, seconds: 0, updatedAt });
+
+test('U. nothing anywhere resumes nothing', () => {
+  assert.equal(resumeBookId(fakeStore(), []), null);
+});
+
+test('U2. this device alone resumes its own last book', () => {
+  const s = fakeStore();
+  writeProgress(s, 'alpha', snap(10), at('2026-09-20T10:00:00Z'));
+  assert.equal(resumeBookId(s, []), 'alpha');
+  assert.equal(resumeBookId(s), 'alpha', 'remote is optional');
+});
+
+test('U3. a newer record on another device, for another book, wins', () => {
+  const s = fakeStore();
+  writeProgress(s, 'alpha', snap(10), at('2026-09-20T10:00:00Z'));
+  assert.equal(resumeBookId(s, [remote('alpha', '2026-09-20T09:00:00Z'),
+                                remote('beta', '2026-09-20T11:00:00Z')]), 'beta');
+});
+
+test('U4. an older record elsewhere loses to this device', () => {
+  const s = fakeStore();
+  writeProgress(s, 'alpha', snap(10), at('2026-09-20T10:00:00Z'));
+  assert.equal(resumeBookId(s, [remote('beta', '2026-09-20T09:59:00Z')]), 'alpha');
+});
+
+test('U5. with nothing local, the newest remote record picks the book', () => {
+  assert.equal(resumeBookId(fakeStore(), [remote('beta', '2026-09-20T09:00:00Z'),
+                                          remote('gamma', '2026-09-21T09:00:00Z'),
+                                          remote('delta', '2026-09-19T09:00:00Z')]), 'gamma');
+});
+
+test('V. a book no longer in the library is skipped, here or elsewhere', () => {
+  const s = fakeStore();
+  writeProgress(s, 'gone', snap(10), at('2026-09-22T10:00:00Z'));
+  const known = (id) => id !== 'gone' && id !== 'also-gone';
+  assert.equal(resumeBookId(s, [remote('also-gone', '2026-09-23T00:00:00Z'),
+                                remote('beta', '2026-09-20T00:00:00Z')], known), 'beta');
+  assert.equal(resumeBookId(s, [], known), null, 'and nothing is resumed in its place');
+});
+
+test('W. an unparseable remote stamp is ignored', () => {
+  const s = fakeStore();
+  writeProgress(s, 'alpha', snap(10), at('2026-09-20T10:00:00Z'));
+  assert.equal(resumeBookId(s, [remote('beta', 'yesterday-ish')]), 'alpha');
+});
+
+test('W2. a local record with no stamp loses to any stamped remote one', () => {
+  const s = fakeStore({ 'rs-last-book-id': 'alpha',
+                        'rs-progress-alpha': JSON.stringify({ bookTime: 5, progress: 0.1 }) });
+  assert.equal(resumeBookId(s, [remote('beta', '2020-01-01T00:00:00Z')]), 'beta');
+  assert.equal(resumeBookId(s, []), 'alpha', 'but still resumes when it is all there is');
 });

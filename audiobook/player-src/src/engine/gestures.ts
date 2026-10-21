@@ -120,3 +120,49 @@ export function resizePanels(
 export function markProgrammaticScroll(el: HTMLElement & { _sbQuietUntil?: number }): void {
   el._sbQuietUntil = Date.now() + 700;
 }
+
+/**
+ * A hold that fires once, for something that is not a drag.
+ *
+ * Separate from longPressDrag rather than a mode of it: that one owns the
+ * touchmove with passive:false so an engaged drag can suppress the scroll, and
+ * a menu has nothing to suppress. Here a move past slop is a scroll and cancels
+ * the press, exactly as it does there, and nothing is preventDefault()ed at all.
+ *
+ * `ignore` exists because the two live on the same row: a hold that begins on
+ * the chapter scrubber is a seek, and must not also be a menu.
+ */
+export function longPress(
+  el: HTMLElement,
+  fire: () => void,
+  ignore?: (target: EventTarget | null) => boolean,
+): void {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let startX = 0;
+  let startY = 0;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+
+  el.addEventListener('touchstart', (e: TouchEvent) => {
+    if (e.touches.length !== 1) return;   // a pinch is not a press
+    if (ignore?.(e.target)) return;
+    const t = e.touches[0];
+    startX = t.clientX;
+    startY = t.clientY;
+    timer = setTimeout(() => {
+      timer = null;
+      // The finger is covering the row it just grabbed; a short buzz is the
+      // only feedback available.
+      if (navigator.vibrate) { try { navigator.vibrate(12); } catch { /* ignore */ } }
+      fire();
+    }, LONG_PRESS_MS);
+  }, { passive: true });
+
+  el.addEventListener('touchmove', (e: TouchEvent) => {
+    const t = e.touches[0];
+    if (!t || !timer) return;
+    if (exceededSlop(t, startX, startY, LONG_PRESS_SLOP_PX)) cancel();
+  }, { passive: true });
+
+  el.addEventListener('touchend', cancel);
+  el.addEventListener('touchcancel', cancel);
+}

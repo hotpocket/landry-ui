@@ -183,6 +183,14 @@ export function Shell({ title, hideBackButton, hideNowPlaying, refs }: ShellProp
                 </button>
               </span>
               <span class="th-spacer" />
+              {/* The controls are one unit: on a narrow screen the header
+                  breaks between the dates and this group, never inside it —
+                  a flat row once stranded A− beside the date and sent A+ to
+                  the next line. Reading mode's transport is a second group
+                  inside it, so the only break seven buttons may take on the
+                  narrowest phones is between the two. */}
+              <span class="th-controls">
+              <span class="th-group">
               {/* Reading mode drops the transport and the chapter list, which
                   between them were the only ways to change chapter — so
                   prev/next join the one row that survives. */}
@@ -195,6 +203,8 @@ export function Shell({ title, hideBackButton, hideNowPlaying, refs }: ShellProp
               <button class="mini-nav-btn mini-next" id="mini-next-btn" title="Next chapter" ref={refs.miniNext}>
                 &raquo;
               </button>
+              </span>
+              <span class="th-group">
               <button class="ts-btn ts-dec" id="ts-dec" title="Smaller text" ref={refs.tsDec}>
                 A&#8722;
               </button>
@@ -207,6 +217,8 @@ export function Shell({ title, hideBackButton, hideNowPlaying, refs }: ShellProp
               <button class="reading-btn" id="reading-btn" title="Reading mode — transcript only" ref={refs.readingBtn}>
                 &#9707; read
               </button>
+              </span>
+              </span>
             </div>
             <div class="transcript-chunks" id="transcript-chunks" ref={refs.transcriptChunks} />
           </div>

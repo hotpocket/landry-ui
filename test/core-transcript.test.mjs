@@ -21,6 +21,19 @@
 //      the previous chunk
 //   I. times before the first and after the last chunk match nothing
 //   J. an empty chunk list matches nothing
+//   K. when BOTH sides carry the source chapter number, that is what pairs
+//      them — position is not identity.
+//
+//      The two lists are built from different membership rules. A chapter is
+//      in the manifest when it has an M4A and a title; it is in the transcript
+//      when it has a WAV, an N.txt and a title. A chapter rendered to WAV but
+//      not yet encoded is in one and not the other — the normal state of a tree
+//      whose renderer encodes after it transcribes — and from that chapter on,
+//      pairing by position shows every chapter the PREVIOUS chapter's text. No
+//      error, no warning, and it lasts exactly as long as the gap does.
+//
+//      `n` is only consulted when both sides have it, so every host that has
+//      not republished keeps the positional rule it has always had.
 
 import assert from 'node:assert';
 import { test } from 'node:test';
@@ -108,4 +121,54 @@ test('I. times outside the chunk range match nothing', () => {
 test('J. an empty chunk list matches nothing', () => {
   assert.equal(findChunkAt([], 0), null);
   assert.equal(findChunkAt(null, 0), null);
+});
+
+// --- K: identity beats position -------------------------------------------
+
+// The transcript has an entry chapter 2 that the MANIFEST does not: chapter 2
+// rendered to WAV and has not been encoded to M4A yet. So the manifest's
+// chapters are n=1 (id 0) and n=3 (id 1), and this list has three entries.
+const gapped = {
+  books: [{
+    slug: 'gapped',
+    chapters: [
+      { index: 1, n: 1, chunks: [{ index: 0, text: 'one', start: 0, end: 1 }] },
+      { index: 2, n: 2, chunks: [{ index: 0, text: 'two', start: 0, end: 1 }] },
+      { index: 3, n: 3, chunks: [{ index: 0, text: 'three', start: 0, end: 1 }] },
+    ],
+  }],
+};
+const gappedBt = bookTranscript(gapped, { slug: 'gapped' });
+const plainBt = bookTranscript(data, { slug: 'repo-story' });
+
+test('K. a chapter is paired by its number when both sides carry one', () => {
+  assert.equal(chapterTranscript(gappedBt, { id: 0, n: 1 }).chunks[0].text, 'one');
+  assert.equal(chapterTranscript(gappedBt, { id: 1, n: 3 }).chunks[0].text, 'three');
+});
+
+test('K. the instrument can see the defect it is here for', () => {
+  // The same reader, paired by position: chapter 3's audio against chapter 2's
+  // words. That is what a listener has been getting, with nothing to say so.
+  const byPosition = gappedBt.chapters.find((c) => c.index === 1 + 1);
+  assert.equal(byPosition.chunks[0].text, 'two');
+  assert.notEqual(byPosition.chunks[0].text,
+                  chapterTranscript(gappedBt, { id: 1, n: 3 }).chunks[0].text);
+});
+
+test('K. a transcript with no numbers still pairs by position', () => {
+  // Every host that has not republished. `data` above carries no `n`.
+  assert.equal(chapterTranscript(plainBt, { id: 0, n: 1 }).index, 1);
+  assert.equal(chapterTranscript(plainBt, { id: 1, n: 2 }).index, 2);
+});
+
+test('K. a chapter with no number still pairs by position', () => {
+  // The other half: a host whose chapter records carry no `n`.
+  assert.equal(chapterTranscript(gappedBt, { id: 0 }).chunks[0].text, 'one');
+  assert.equal(chapterTranscript(gappedBt, { id: 1 }).chunks[0].text, 'two');
+});
+
+test('K. a number that matches nothing does not fall back to a position', () => {
+  // Silently showing the wrong chapter's text is the defect. Showing none is a
+  // chapter that has not been transcribed yet, which is the truth.
+  assert.equal(chapterTranscript(gappedBt, { id: 9, n: 99 }), null);
 });

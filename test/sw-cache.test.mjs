@@ -25,6 +25,12 @@
 //      hash is in the URL, so a stale entry can never answer for new bytes —
 //      but index.html carries no hash and is what points at the new hashes, so
 //      it must keep revalidating or a deploy would never be picked up
+//   I. the worker keeps out of sign-in. Requests to another origin (the
+//      landry.bot broker's token endpoint and members API) and non-GET
+//      requests are not handled at all: a cached token response would be
+//      replayed when the network fails, handing the page a stale token pair as
+//      if a refresh had worked. And the return from the broker, `/?code=…`, is
+//      not cached — its code is single-use, and each one is a new entry
 //   F. a Range that starts past the end of a cached entry is refused with 416,
 //      not answered with a malformed 206. Clamping only the END lets `start`
 //      overtake it, and the response then carries a negative Content-Length and
@@ -484,6 +490,64 @@ async function pollCache(name, want, timeoutMs) {
   await page.evaluate(() => fetch('/').then((r) => r.text()));
   check(hits('/') - rootBefore === 1,
     'H: index.html keeps revalidating so a deploy is picked up');
+}
+
+// --- I: sign-in traffic is not the worker's -----------------------------------
+{
+  // The broker, on its own origin. CORS like the real one; `down` drops the
+  // connection, which is what a phone losing signal looks like to fetch.
+  const broker = { tokens: 0, down: false };
+  const brokerServer = createServer((req, res) => {
+    const cors = { 'access-control-allow-origin': '*',
+                   'access-control-allow-headers': 'authorization, content-type' };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); res.end(); return; }
+    if (broker.down) { req.socket.destroy(); return; }
+    if (req.url.startsWith('/oauth2/token')) {
+      broker.tokens++;
+      res.writeHead(200, Object.assign({ 'content-type': 'application/json' }, cors));
+      res.end(JSON.stringify({ access_token: 'access-' + broker.tokens, refresh_token: 'r' }));
+      return;
+    }
+    res.writeHead(200, Object.assign({ 'content-type': 'application/json' }, cors));
+    res.end('{"members":[]}');
+  });
+  await new Promise((r) => brokerServer.listen(0, '127.0.0.1', r));
+  const brokerOrigin = `http://127.0.0.1:${brokerServer.address().port}`;
+
+  const allKeys = () => page.evaluate(() => caches.keys().then((names) => Promise.all(
+    names.map((n) => caches.open(n).then((c) => c.keys()).then((ks) => ks.map((k) => k.url)))))
+    .then((lists) => [].concat(...lists)));
+
+  const first = await page.evaluate((u) => fetch(u + '/oauth2/token', {
+    method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=refresh_token&refresh_token=r' }).then((r) => r.json()), brokerOrigin);
+  await page.evaluate((u) => fetch(u + '/sites/books/members',
+    { headers: { authorization: 'Bearer x' } }).then((r) => r.text()), brokerOrigin);
+  await new Promise((r) => setTimeout(r, 300));
+  const keys = await allKeys();
+  check(first.access_token === 'access-1', 'I: precondition — the token call went through');
+  check(!keys.some((k) => k.startsWith(brokerOrigin)),
+    `I: nothing from the broker's origin is cached (${keys.filter((k) => k.startsWith(brokerOrigin))})`);
+
+  // The failure the cache would turn into a lie: the network goes, and the
+  // page asks for a fresh token. It must hear that it failed.
+  broker.down = true;
+  const offline = await page.evaluate((u) => fetch(u + '/oauth2/token', {
+    method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=refresh_token&refresh_token=r' })
+    .then((r) => r.ok ? r.json().then((b) => 'served ' + b.access_token) : 'status ' + r.status,
+          () => 'rejected'), brokerOrigin);
+  check(!/^served/.test(offline),
+    `I: an unreachable token endpoint is a failure, never a replayed token (${offline})`);
+
+  // The return from the broker. Navigated to for real, so the worker sees a
+  // navigation exactly as it would on the way back from sign-in.
+  await page.goto(origin + '/index.html?code=one-time-code&state=s1');
+  await new Promise((r) => setTimeout(r, 300));
+  const after = await allKeys();
+  check(!after.some((k) => k.includes('code=')),
+    `I: the ?code= return is not cached (${after.filter((k) => k.includes('code='))})`);
+  brokerServer.close();
 }
 
 await browser.close();

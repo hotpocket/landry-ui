@@ -298,7 +298,5 @@ if grants ever exceed ~50.
 - Branch per deliverable.
 - Tests before code. Red per assertion, not per file. Revert-and-watch after
   green. Real-browser check on anything with pixels.
-- **Never `git push`** — the agent, that is. Pushing is the owner's, so they can
-  watch it; the agent prepares the branch and hands over the exact commands. The
-  push itself is not optional: consumers fetch this player at deploy time, so an
+- **Push after committing** (never force-push). The push is not optional: consumers fetch this player at deploy time, so an
   unpushed change is one karagame's next `deploy.sh` silently overwrites.

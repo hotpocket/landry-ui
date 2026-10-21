@@ -26,10 +26,26 @@
 //      2026-08-09: three watchdog reloads produced ONE request on the wire and
 //      recovered nothing — so the stall path needs a URL the network stack has
 //      not seen.
+//   H. a chapter's audio URL carries the content hash of the audio it names,
+//      so a re-rendered chapter is a DIFFERENT URL to every cache in the path.
+//
+//      THE CLASS: every artifact derived from source/N.txt that is addressed
+//      by a name which does not move when the text does. Audio is published to
+//      a stable S3 key under `public, max-age=31536000, immutable`; a
+//      re-render lands on that same key, and nothing — CloudFront, the service
+//      worker, the browser cache, an installed PWA — has any reason to ask for
+//      it again. Measured 2026-08-25: a reader in a FRESH incognito profile was
+//      served a 46-hour-old chapter (Age 165651, X-Cache Hit) whose bytes had
+//      been replaced in S3 twenty hours earlier.
+//
+//      transcripts.json has carried `?v=<hash>` since the same defect bit the
+//      text tier. This is the audio half of the same trick, and it is
+//      deliberately the parameter that already exists rather than a new one.
 
 import assert from 'node:assert';
 import { test } from 'node:test';
-import { withMediaQuery, secondsUntilExpiry, withCacheBust } from '../audiobook/player-src/src/core/media-url.ts';
+import { withMediaQuery, secondsUntilExpiry, withCacheBust, withContentVersion, CONTENT_VERSION_PARAM }
+  from '../audiobook/player-src/src/core/media-url.ts';
 
 const Q = 'Policy=abc&Signature=def&Key-Pair-Id=KID';
 
@@ -116,4 +132,44 @@ test('G. a cache bust makes a distinct URL, and only when asked', () => {
   assert.notEqual(withCacheBust('/a/x.m4a', 1), withCacheBust('/a/x.m4a', 2));
   // The object fetched is still the same object.
   assert.equal(withCacheBust('/a/chapter_0002.m4a', 3).split('?')[0], '/a/chapter_0002.m4a');
+});
+
+test('H. the content version addresses the URL by what it holds', () => {
+  const HASH = '9f2c1ab4c0de5567';
+  assert.equal(withContentVersion('/priv/s/b/audio/chapter_0003.m4a', HASH),
+               `/priv/s/b/audio/chapter_0003.m4a?${CONTENT_VERSION_PARAM}=${HASH}`);
+  // A different render is a different URL. This is the whole fix in one line:
+  // no cache anywhere can answer the new URL with the old bytes.
+  assert.notEqual(withContentVersion('/a/chapter_0003.m4a', 'aaaaaaaaaaaaaaaa'),
+                  withContentVersion('/a/chapter_0003.m4a', 'bbbbbbbbbbbbbbbb'));
+});
+
+test('H. a host with no hashes is left exactly as it was', () => {
+  // karagame and brandonlandry.com publish manifests with no content_hash, and
+  // an invented parameter there would be a URL that changes when nothing did —
+  // busting every reader's cache on every deploy, the opposite failure.
+  for (const absent of ['', null, undefined]) {
+    assert.equal(withContentVersion('/audio/chapter_0001.m4a', absent),
+                 '/audio/chapter_0001.m4a');
+  }
+});
+
+test('H. the version goes on before the signature, and the object is unchanged', () => {
+  const HASH = '9f2c1ab4c0de5567';
+  const url = withMediaQuery(withContentVersion('/priv/s/b/audio/chapter_0003.m4a', HASH), Q);
+  assert.equal(url, `/priv/s/b/audio/chapter_0003.m4a?${CONTENT_VERSION_PARAM}=${HASH}&${Q}`);
+  // E, restated for the version: the path still names the same S3 object, so
+  // no re-upload and no key change are implied by any of this.
+  assert.equal(url.split('?')[0], '/priv/s/b/audio/chapter_0003.m4a');
+});
+
+test('H. it is the same parameter transcripts.json already uses', () => {
+  // One name, not two. The service worker keeps `v` in its cache key and
+  // strips the signature parameters around it; a second spelling here would be
+  // a second thing to keep in step with sw.js.
+  assert.equal(CONTENT_VERSION_PARAM, 'v');
+});
+
+test('H. a URL that already has a query keeps it', () => {
+  assert.equal(withContentVersion('/audio/x.m4a?rsr=2', 'abc'), '/audio/x.m4a?rsr=2&v=abc');
 });

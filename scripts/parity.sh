@@ -59,7 +59,8 @@ skipped=""
 # build at that URL so the shared fixture needs no fork.
 for f in test/*.test.mjs; do
   base="$(basename "$f" .test.mjs)"
-  case "$base" in core-*|vanilla-retirement) continue ;; esac
+  # luinst tests the installer script, not a player: it runs under node --test (CLAUDE.md, Tests).
+  case "$base" in core-*|vanilla-retirement|luinst) continue ;; esac
   if grep -q "join(here, '../audiobook/player')" "$f"; then
     skipped="$skipped $base"
     continue

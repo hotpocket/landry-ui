@@ -8,6 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
 
 const require = createRequire(import.meta.url);
 const LandryAuth = require('../js/landry-auth.js');
@@ -92,14 +93,22 @@ test('coming back with a code: exchanged with the verifier, URL cleaned, back on
   const ex = back.calls.find((c) => c.url.endsWith('/oauth2/token'))!;
   assert.equal(ex.body!.get('grant_type'), 'authorization_code');
   assert.equal(ex.body!.get('code'), 'abc');
-  assert.ok(ex.body!.get('code_verifier'));
+  // PKCE S256: the challenge sent out is the SHA-256 of the verifier sent back.
+  const verifier = ex.body!.get('code_verifier') ?? '';
+  assert.ok(verifier.length >= 43);
+  assert.equal(createHash('sha256').update(verifier).digest('base64url'), sent.searchParams.get('code_challenge'));
   assert.equal(back.win.location.href, 'https://graph.landry.bot/some/page?x=1');
 });
 
 test('a code with a state we did not issue is refused and never exchanged', async () => {
-  const b = browser('https://graph.landry.bot/?code=abc&state=forged');
+  // A sign-in of this tab is pending, so only the state comparison can refuse the code.
+  const first = browser('https://graph.landry.bot/some/page');
+  await first.auth.init();
+  await first.auth.signIn();
+  const b = browser('https://graph.landry.bot/?code=abc&state=forged', { shared: { local: first.local, session: first.session } });
   const s = await b.auth.init();
   assert.equal(s.status, 'error');
+  assert.match(s.message, /did not match/);
   assert.equal(b.calls.length, 0);
   assert.equal(b.win.location.search, '');
 });
@@ -242,6 +251,8 @@ test('a storage that takes reads but refuses writes still remembers in memory', 
   const back = browser(`https://graph.landry.bot/?code=c&state=${state}`, { shared: { local: b.local, session: first.session } });
   assert.equal((await back.auth.init()).status, 'signedIn');
   assert.ok(await back.auth.accessToken());
+  // Looking again reads the session back from storage: the refused write is kept in memory.
+  assert.equal((await back.auth.init()).status, 'signedIn');
 });
 
 test('sessionStorage that reads but refuses writes: sign-in stays put and says why', async () => {

@@ -80,6 +80,8 @@ Three entry points, and they cover different things:
 - `node --test test/core-*.test.mjs` — the framework-free core. No browser, no
   build: Node strips the TypeScript types and imports `player-src/src/core/*`
   directly. Fast enough to run on every edit.
+- `node --test test/luinst.test.mjs` and `cd sso-gate && npm test` — the installer
+  and the sign-in client (sso-gate). Not browser suites; parity.sh skips them.
 - `scripts/parity.sh` — every browser suite against the built player. It also
   reports which suites are *parity* suites and which are *feature* suites, and
   the classification is derived from how each one resolves the player on disk.

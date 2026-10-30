@@ -115,6 +115,10 @@ import AudiobookPlayer from './AudiobookPlayer';
 />
 ```
 
+### sso-gate/
+
+Google sign-in + Admin-managed allow-list for a site with an API. See [sso-gate/README.md](sso-gate/README.md).
+
 ### serve/
 
 Threaded dev server with HTTP Range request support. Required for seeking in large audio files — Python's built-in `http.server` doesn't handle Range headers.

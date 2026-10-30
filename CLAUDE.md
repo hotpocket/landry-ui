@@ -37,6 +37,7 @@ than restating it here.
 
 - `audiobook/vanilla/` — Vanilla JS audiobook player
 - `audiobook/react/` — React/TypeScript audiobook player
+- `sso-gate/` — Google sign-in + Admin-managed allow-list (server middleware, CDK construct, Flutter client); see `sso-gate/README.md`. Its TypeScript halves are vendored *and committed* by consumers (stamped `.luinst`), unlike the gitignored player.
 - `serve/` — Dev server with HTTP Range support for large audio files
 
 ## Performance lessons

@@ -39,5 +39,14 @@ rm -rf "$DEST"
 mkdir -p "$DEST"
 cp -r "$TMPDIR/$COMPONENT"/* "$DEST"/
 
+# Provenance: a vendored (committed) copy must say which commit it is.
+cat > "$DEST/.luinst" <<STAMP
+# Fetched by luinst — do not edit; re-run luinst to update.
+repo=${REPO}
+branch=${BRANCH}
+commit=$(git -C "$TMPDIR" rev-parse HEAD)
+component=${COMPONENT}
+STAMP
+
 echo "Installed:"
 ls -1 "$DEST"

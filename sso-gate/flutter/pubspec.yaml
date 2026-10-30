@@ -1,0 +1,22 @@
+name: sso_gate
+description: >-
+  landry.bot sign-in (the Cognito broker at auth.landry.bot, Google behind it)
+  + the shared "manage users" UI for Flutter web sites. Mirrors ../js.
+publish_to: none
+version: 0.2.0
+
+environment:
+  sdk: ^3.10.4
+  flutter: ">=3.38.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  crypto: ^3.0.6
+  http: ^1.2.0
+  web: ^1.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
